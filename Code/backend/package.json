@@ -9,16 +9,11 @@
     "seed": "tsx prisma/seed.ts"
   },
   "scripts": {
-    "gen:brand": "node scripts/gen-brand.mjs",
-    "prebuild": "npm run gen:brand",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "prestart": "npm run gen:brand",
     "start": "nest start",
-    "prestart:dev": "npm run gen:brand",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "prestart:prod": "npm run gen:brand",
     "start:prod": "node dist/src/main.js",
     "seed": "tsx prisma/seed.ts",
     "seed:admin": "tsx prisma/seed-admin.ts",

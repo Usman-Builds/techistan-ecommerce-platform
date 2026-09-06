@@ -8,13 +8,13 @@ The single backend for Techistan, serving both the `user_client` (storefront, :3
 - **Setup:** `cp .env.example .env.development` (fill in) → `npx prisma generate` → `npm run start:dev`
 - Built by executing the numbered scripts in `Documentation/Claude Scripts/` in order (`00-BUILD-ORDER.md` first).
 
-> Frontend theming note: brand tokens live in `Code/shared/theme/brand.ts` and are synced into each client — a backend concern only for branded emails (script 16), which import from the same shared source.
+> Theming note: this app owns its brand tokens outright at `src/shared/brand.ts`, and they matter here only for branded emails (script 16), which import them directly. The two Next clients each carry their own independent copy under `src/theme/` — editing this one does **not** re-theme them.
 
 ---
 
 ## Running in Docker
 
-Everything is driven from the **monorepo root** (`Code/`), not from `backend/`. That is not a stylistic choice: `npm run build` fires a prebuild hook that copies `shared/theme/brand.ts` into `src/shared/brand.generated.ts`, so a build context rooted at `backend/` cannot produce a working image.
+Docker builds are driven from the **monorepo root** (`Code/`), not from `backend/` — every `COPY` in the Dockerfile is written relative to `Code/`. This used to be a hard requirement (a prebuild hook reached out to `shared/theme/brand.ts`); it is now only a convention shared with `docker-compose.yml` and `render.yaml`. See the header of `Dockerfile`.
 
 ```bash
 cd Code

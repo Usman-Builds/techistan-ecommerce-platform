@@ -8,17 +8,19 @@
 #     cd Code
 #     docker build -f backend/Dockerfile -t techistan-api .
 #
-# It has to be the monorepo root, because the backend cannot build from its own
-# directory alone. "npm run build" fires the prebuild hook, which runs
-# scripts/gen-brand.mjs, which reads ../../shared/theme/brand.ts and copies it
-# to src/shared/brand.generated.ts. That copy is what makes one edit to the
-# shared brand file re-theme the transactional emails as well as both
-# storefronts. A context rooted at backend/ cannot see the file, so it produces
-# an image that fails to build at all.
+# This used to be a hard requirement: the build ran a prebuild hook that reached
+# out to ../../shared/theme/brand.ts, so a context rooted at backend/ could not
+# see the file and the image failed to build. That shared directory is gone --
+# the backend now owns its brand tokens outright at src/shared/brand.ts -- so
+# nothing outside backend/ is referenced any more and the context COULD be
+# narrowed to Code/backend/. It is deliberately left at Code/ so that this file,
+# docker-compose.yml and render.yaml keep agreeing on one context; narrowing it
+# means dropping the "backend/" prefix from every COPY below AND updating both
+# of those files in the same commit. The frontends contribute nothing but a
+# little upload time (their node_modules and .next are in .dockerignore).
 #
-# The layout inside the image mirrors the repo one-for-one (/app/backend next to
-# /app/shared) so that relative path keeps resolving and no script needs a
-# Docker-only branch.
+# The layout inside the image still mirrors the repo (/app/backend), so no path
+# in the tree needs a Docker-only branch.
 #
 # Every COPY names its sources explicitly instead of "COPY . .". That costs a
 # few lines and buys two things: node_modules and .env* are never even
@@ -73,15 +75,12 @@ COPY backend/prisma ./prisma
 # there for what silently goes wrong when it is not.
 RUN npx prisma generate
 
-# /app/shared is the sibling that scripts/gen-brand.mjs reaches for.
-COPY shared /app/shared
 COPY backend/tsconfig.json backend/tsconfig.build.json backend/nest-cli.json ./
-COPY backend/scripts ./scripts
 COPY backend/src ./src
 
-# prebuild -> gen:brand -> nest build. Emits dist/src/main.js (the entry is
-# nested under src/ because prisma/*.ts is compiled too, which lifts the
-# computed rootDir to the package root).
+# Plain "nest build" -- there is no prebuild hook any more. Emits
+# dist/src/main.js; the entry is nested under src/ because prisma/*.ts is
+# compiled too, which lifts the computed rootDir to the package root.
 RUN npm run build
 
 

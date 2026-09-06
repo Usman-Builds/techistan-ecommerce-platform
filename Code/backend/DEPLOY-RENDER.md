@@ -2,7 +2,7 @@
 
 The image already builds and runs (`docker compose up` works end to end), so the container side of this is done. What follows is everything *around* it.
 
-Companion file: [`Code/render.yaml`](../render.yaml).
+Companion file: [`render.yaml`](../../render.yaml), at the repo root.
 
 ---
 
@@ -14,7 +14,7 @@ Render deploys from GitHub, GitLab or Bitbucket. Nothing here is deployable yet,
 
 | Path | State |
 | --- | --- |
-| `ecommerce/`, `Code/`, `Code/backend/` | **no repo** — the backend is not under version control at all |
+| `ecommerce/` | ~~no repo~~ — **resolved**: the repo is now rooted here, on `main`, and `render.yaml` sits at its root |
 | `Code/frontend/user_client/` | its own repo: 2 commits, no remote, 61 uncommitted paths |
 | `Code/frontend/admin_client/` | its own repo: 2 commits, no remote, 56 uncommitted paths |
 
@@ -34,11 +34,13 @@ git add -A
 git status          # <- READ THIS BEFORE COMMITTING
 ```
 
-**Or keep them separate**, and give the backend its own repo at `Code/backend/`. Then `render.yaml` moves to `Code/backend/render.yaml` and its Docker paths become `./Dockerfile` and `.` — but note that the build will then fail, because the context no longer contains `shared/theme/brand.ts`. Going this route means vendoring that file into `backend/` first. The single repo is genuinely the simpler path.
+**Or keep them separate**, and give the backend its own repo at `Code/backend/`. Then `render.yaml` moves to `Code/backend/render.yaml` and its Docker paths become `./Dockerfile` and `.`, and every `COPY` in the Dockerfile loses its `backend/` prefix. This is now viable — the backend stopped reaching outside its own directory when `Code/shared` was split into per-app copies — but it is still more moving parts than the single repo.
 
 Whichever you pick, before committing check that no `.env*` file except the two `.example` ones is staged. The three package-level `.gitignore` files cover `node_modules` and env files in their own subtrees, but nothing covers `Code/` itself. Then push to a new private GitHub repo.
 
-> If you init at `ecommerce/` instead of `Code/`, move `render.yaml` up there and change its two Docker paths to `./Code/backend/Dockerfile` and `./Code`.
+> **This is what was done.** The repo is rooted at `ecommerce/`, not `Code/`, so `render.yaml` lives at `ecommerce/render.yaml` and its two Docker paths carry the `Code/` prefix: `dockerfilePath: ./Code/backend/Dockerfile` and `dockerContext: ./Code`. Setting the context to the repo root instead is a build failure, not a slow build — every `COPY` in the Dockerfile is written relative to `Code/`, and `.dockerignore` is read from the context root and lives at `Code/.dockerignore`.
+>
+> The gitlink warning above still stands: both frontend directories are recorded as bare commit pointers. That does not affect this backend deploy, but it will bite when you deploy a frontend.
 
 ### 2. You need two more accounts, not just Neon and Cloudinary
 

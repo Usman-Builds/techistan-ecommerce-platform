@@ -1,6 +1,7 @@
 # Build context for backend/Dockerfile. It sits at the MONOREPO ROOT, not in
-# backend/, because that is where the context is rooted -- the backend build
-# needs shared/theme/brand.ts as well as backend/ itself (see backend/Dockerfile).
+# backend/, because that is where the context is rooted (see backend/Dockerfile
+# for why the context stays at Code/ now that the backend no longer reaches
+# outside its own directory).
 #
 # Kept deliberately general rather than "exclude everything but backend/": the
 # excluded paths are the ones that are heavy, secret, or host-specific, so a

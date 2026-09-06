@@ -1,20 +1,24 @@
-// ⚠️  GENERATED FILE — DO NOT EDIT.
-// Produced by scripts/gen-brand.mjs from Code/shared/theme/brand.ts on prebuild/
-// prestart. Edit the shared source, not this copy.
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Techistan BRAND — SINGLE SOURCE OF TRUTH for the entire platform.
+// Techistan BRAND — source of truth for the TRANSACTIONAL EMAILS.
 //
-// EDIT THIS FILE TO RE-BRAND EVERYTHING (both Next.js clients + transactional
-// emails). After editing, run `npm run gen:theme` in each client — it runs
-// automatically on `predev`/`prebuild`, so a normal `npm run dev` / `npm run
-// build` already picks up your changes. No other source file needs to change.
+// INDEPENDENT COPY. This file was split out of the former Code/shared/theme;
+// each of the three apps now owns its own brand and they are free to diverge.
+// The other two live at:
+//   Code/frontend/user_client/src/theme/brand.ts
+//   Code/frontend/admin_client/src/theme/brand.ts
+//   Code/backend/src/shared/brand.ts
+// Editing one no longer touches the others — to keep them in step, edit all
+// three.
+//
+// Nothing generates from this file: src/modules/email/templates/theme.ts
+// imports it directly and converts the HSL triplets to the inline hex that
+// email clients understand. Edit and rebuild; there is no sync step.
 //
 // Colors are raw HSL triplets "H S% L%" (no `hsl(...)` wrapper) so they compose
 // in CSS as `hsl(var(--token))` and can be alpha-adjusted with `/ <alpha>`.
 //
 // This file is framework-agnostic: NO React / Next / DOM imports. It is consumed
-// by both clients AND by the backend email templates (script 16).
+// by whichever app owns it — see the header above.
 // ─────────────────────────────────────────────────────────────────────────────
 export const brand = {
   name: "Techistan",

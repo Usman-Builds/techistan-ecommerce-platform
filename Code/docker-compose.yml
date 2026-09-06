@@ -6,8 +6,8 @@
 #     docker compose up --build
 #
 # This file lives at the monorepo root rather than in backend/ because the
-# backend image is built from a root-level context -- it needs shared/theme in
-# addition to backend/. See backend/Dockerfile for why.
+# backend image is built from a root-level context: every COPY in the Dockerfile
+# is written relative to Code/. See backend/Dockerfile for why it stays that way.
 #
 # Three services, in the order they run:
 #   db       Postgres, the only stateful piece.

@@ -1,17 +1,17 @@
 # =============================================================================
 # Render blueprint for the Techistan backend.
 #
-# This file must sit at the ROOT OF THE GIT REPO. It is written for a repo
-# rooted at Code/ (so this file is Code/render.yaml). If you instead init git
-# one level up at ecommerce/, move this file there and change the two docker
-# paths to ./Code/backend/Dockerfile and ./Code.
+# This file must sit at the ROOT OF THE GIT REPO, which for this project is
+# ecommerce/ -- one level ABOVE Code/. That is why the two docker paths below
+# are Code/-prefixed. If the repo is ever re-rooted at Code/ instead, this file
+# moves down with it and those paths lose the prefix.
 #
 # Render reads this on "New > Blueprint". Everything marked "sync: false" is
 # deliberately NOT in this file -- you fill those in the dashboard, and they
 # never touch the repo. Everything marked "generateValue: true" is generated
 # once by Render and stored there; you never see or need it.
 #
-# See backend/DEPLOY-RENDER.md for the full runbook.
+# See Code/backend/DEPLOY-RENDER.md for the full runbook.
 # =============================================================================
 
 services:
@@ -31,10 +31,18 @@ services:
     # site to someone; see the runbook before putting it in front of customers.
     plan: free
 
-    # The build context is the repo root, NOT backend/. The image cannot build
-    # from backend/ alone -- the prebuild hook reads shared/theme/brand.ts.
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: .
+    # The build context is Code/, NOT the repo root. Every COPY in the
+    # Dockerfile is written relative to Code/ (COPY backend/package.json, ...),
+    # and .dockerignore -- which is what keeps node_modules and .env* out of the
+    # upload -- is read from the root of the context and lives at Code/. Setting
+    # this to "." is a build failure on the first COPY, not a slow build.
+    #
+    # Narrowing it further to ./Code/backend would now work too (the backend
+    # stopped reaching outside its own directory when Code/shared was split up),
+    # but that means dropping the "backend/" prefix from every COPY in the
+    # Dockerfile and updating docker-compose.yml to match. Left as-is.
+    dockerfilePath: ./Code/backend/Dockerfile
+    dockerContext: ./Code
 
     healthCheckPath: /health
     autoDeployTrigger: commit

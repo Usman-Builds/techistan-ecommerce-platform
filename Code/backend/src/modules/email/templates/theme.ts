@@ -1,9 +1,10 @@
-// Email theme bridge (script 16, FR-903). Converts the shared brand tokens
+// Email theme bridge (script 16, FR-903). Converts this app's brand tokens
 // (raw HSL triplets) into the concrete hex colors + font stacks that email
-// clients understand inline — so a single edit to Code/shared/theme/brand.ts
-// (copied here by gen:brand) re-themes every transactional email AND both
-// storefronts. No hardcoded hex/font lives in the templates themselves.
-import { brand } from '../../../shared/brand.generated';
+// clients understand inline — so a single edit to src/shared/brand.ts re-themes
+// every transactional email. No hardcoded hex/font lives in the templates
+// themselves. The two storefronts carry their own brand files and are NOT
+// re-themed by this one; see the header of src/shared/brand.ts.
+import { brand } from '../../../shared/brand';
 
 /** Parse a raw "H S% L%" triplet into a #rrggbb hex string. */
 function hslTripletToHex(triplet: string): string {

@@ -1,0 +1,56 @@
+# Build context for backend/Dockerfile. It sits at the MONOREPO ROOT, not in
+# backend/, because that is where the context is rooted -- the backend build
+# needs shared/theme/brand.ts as well as backend/ itself (see backend/Dockerfile).
+#
+# Kept deliberately general rather than "exclude everything but backend/": the
+# excluded paths are the ones that are heavy, secret, or host-specific, so a
+# future frontend image can share this file instead of fighting it. A
+# Dockerfile that wants something different can drop its own
+# <name>.Dockerfile.dockerignore beside itself, which takes precedence.
+
+# Dependency trees. These are the expensive ones -- without this line the
+# context upload alone is several GB, and any host-built native binary in here
+# (bcrypt, the Windows Prisma engine) is wrong for a Linux image anyway.
+**/node_modules
+
+# Build output. Everything is compiled inside the image.
+**/dist
+**/build
+**/.next
+**/out
+backend/generated
+**/*.tsbuildinfo
+
+# Secrets. The image is configured through the environment, never by baking a
+# file in. The tracked template is the one exception.
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.docker.example
+
+# Test and tooling artifacts
+**/coverage
+**/.nyc_output
+**/.eslintcache
+**/.turbo
+
+# VCS, editors, OS
+.git
+.gitignore
+**/.github
+**/.vscode
+**/.idea
+**/.DS_Store
+**/Thumbs.db
+
+# Logs and scratch
+**/*.log
+**/npm-debug.log*
+**/.temp
+**/.tmp
+
+# Docker's own files -- nothing in the image reads them
+**/Dockerfile
+**/Dockerfile.*
+.dockerignore
+docker-compose*.yml

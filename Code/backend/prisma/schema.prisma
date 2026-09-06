@@ -1,0 +1,980 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── Enums ───────────────────────────
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+}
+
+enum Role {
+  CUSTOMER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  BANNED
+  PENDING_DELETION // GDPR: deletion requested, inside the 30-day grace window (FR-114)
+  DELETED // GDPR: grace window elapsed, PII anonymized in place
+}
+
+enum AddressType {
+  SHIPPING
+  BILLING
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  REQUIRES_PAYMENT
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum CouponType {
+  PERCENT
+  FIXED
+  FREE_SHIPPING
+}
+
+/// What a coupon or automatic discount is allowed to discount.
+///
+/// ALL discounts the whole cart. CATEGORY and PRODUCT discount only the
+/// matching lines: the promotion is computed against the ELIGIBLE subtotal, not
+/// the cart subtotal, so a "20% off audio" coupon on a cart holding one pair of
+/// headphones and one laptop takes 20% off the headphones only.
+enum PromotionScope {
+  ALL
+  CATEGORY
+  PRODUCT
+}
+
+enum DiscountStatus {
+  ACTIVE
+  SCHEDULED
+  DISABLED
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OrderNoteVisibility {
+  INTERNAL
+  CUSTOMER
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+// ─────────────────────────── Auth / Users ───────────────────────────
+// User keeps Int autoincrement id (existing auth code depends on it).
+
+model User {
+  id           Int          @id @default(autoincrement())
+  firstName    String
+  lastName     String
+  email        String       @unique
+  phoneNumber  String?      @unique
+  profilePhoto String? // URL to profile image (Google avatar or uploaded image)
+  gender       String? // 'male', 'female', 'other'
+  dateOfBirth  DateTime? // Optional user DOB
+  password     String? // nullable for Google users
+  googleId     String?      @unique // Store Google account ID if authenticated via Google
+  provider     AuthProvider @default(LOCAL) // Tracks login method: LOCAL or GOOGLE
+  refreshToken String? // Store latest JWT refresh token if applicable
+
+  // added in this script
+  role          Role       @default(CUSTOMER)
+  status        UserStatus @default(ACTIVE)
+  emailVerified DateTime? // set by script 04 verification flow
+
+  // GDPR account-deletion grace window (FR-114, script 17). Set when a customer
+  // requests deletion; a daily cron anonymizes the row once this passes. Null =
+  // no pending deletion (also cleared when a request is cancelled in-window).
+  deletionScheduledAt DateTime?
+
+  // TOTP extension point (FR-107, Should — NOT implemented now). Admin 2FA would
+  // add `totpSecret String?` (encrypted at rest) and `totpEnabled Boolean @default(false)`
+  // here, and a POST /auth/verify-totp step in the admin login flow (see auth.controller).
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // relations
+  addresses           Address[]
+  carts               Cart[]
+  wishlistItems       WishlistItem[]
+  orders              Order[]
+  reviews             Review[]
+  reviewVotes         ReviewVote[]
+  orderNotes          OrderNote[]
+  couponRedemptions   CouponRedemption[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+  emailVerifyTokens   EmailVerificationToken[]
+  passwordResetTokens PasswordResetToken[]
+  recentlyViewed      RecentlyViewed[]
+
+  @@index([role])
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    Int
+  tokenHash String    @unique // store a hash, never the raw token
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    Int
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Address {
+  id         String      @id @default(cuid())
+  userId     Int
+  type       AddressType @default(SHIPPING)
+  label      String? // "Home", "Work"
+  fullName   String
+  phone      String?
+  line1      String
+  line2      String?
+  city       String
+  state      String
+  postalCode String
+  country    String      @default("US")
+  isDefault  Boolean     @default(false)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ─────────────────────────── Catalog ───────────────────────────
+
+model Category {
+  id       String  @id @default(cuid())
+  name     String
+  slug     String  @unique
+  parentId String? // self-relation; max 3 levels enforced in app layer
+
+  /// Merchandising copy shown on the category landing page, above the grid.
+  description String?
+  /// Square/portrait art used for posters, mega-menu tiles and rail cards.
+  imageId     String? // Cloudinary publicId
+  imageUrl    String?
+  /// Wide art used as the category page cover. Distinct from imageUrl because
+  /// a 3:4 poster crop is unusable as a 16:5 banner.
+  bannerId    String?
+  bannerUrl   String?
+  /// Lucide icon name (e.g. "Laptop"). Overrides the storefront slug/keyword
+  /// heuristic, which can only ever guess for admin-authored categories.
+  iconKey     String?
+
+  metaTitle       String?
+  metaDescription String?
+
+  /// Hidden categories 404 on the storefront and vanish from every feed.
+  isActive  Boolean @default(true)
+  /// Excluded from header/footer navigation while still being browsable.
+  showInNav Boolean @default(true)
+  /// Opted in to the homepage "featured categories" rail.
+  featured  Boolean @default(false)
+
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
+  products Product[]
+
+  couponScopes   CouponCategory[]
+  discountScopes DiscountCategory[]
+  navItems       NavItem[]
+
+  @@index([parentId])
+  @@index([isActive])
+}
+
+model Brand {
+  id        String    @id @default(cuid())
+  name      String
+  slug      String    @unique
+  logoUrl   String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  products  Product[]
+}
+
+model Product {
+  id          String        @id @default(cuid())
+  title       String
+  slug        String        @unique
+  description String? // markdown / rich text
+  status      ProductStatus @default(DRAFT)
+  categoryId  String?
+  brandId     String?
+
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+  ogImage         String?
+  canonicalUrl    String?
+
+  // Denormalized aggregate rating (script 13, FR-703). `ratingAverage` is the
+  // mean of APPROVED review ratings scaled ×100 (e.g. 450 = 4.5 stars) so it
+  // stays integer like every other numeric column; `ratingCount` is the number
+  // of APPROVED reviews. Both are recomputed on every moderation action.
+  ratingAverage Int @default(0)
+  ratingCount   Int @default(0)
+
+  // Full-text search vector over title + description + tag names (script 08).
+  // Maintained entirely by DB triggers (see migration add_product_search); Prisma
+  // never reads/writes it directly — it is typed Unsupported so migrate leaves it
+  // alone. A GIN index on it (+ a trigram GIN index on title) is created in raw SQL.
+  searchVector Unsupported("tsvector")? @map("search_vector")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  category       Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  brand          Brand?            @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  variants       ProductVariant[]
+  images         ProductImage[]
+  productTags    ProductTag[]
+  reviews        Review[]
+  wishlistedBy   WishlistItem[]
+  recentlyViewed RecentlyViewed[]
+  couponScopes   CouponProduct[]
+  discountScopes DiscountProduct[]
+
+  @@index([categoryId, status])
+  @@index([status, createdAt])
+  @@index([brandId])
+}
+
+model ProductVariant {
+  id             String    @id @default(cuid())
+  productId      String
+  sku            String    @unique
+  price          Int // cents — the regular price (compare-at when a sale is active)
+  compareAtPrice Int? // cents — manufacturer MSRP / strike-through
+  stock          Int       @default(0)
+  weightGrams    Int? // integer grams (avoid floats)
+  barcode        String?
+  options        Json // e.g. { "Size": "M", "Color": "Red" }
+  // Scheduled sale pricing (script 12, FR-604). When `now` ∈ [saleStartsAt, saleEndsAt]
+  // (open-ended if a bound is null) and salePrice is set, salePrice is the effective
+  // price and `price` becomes the compare-at. Read via effectivePriceCents().
+  salePrice      Int? // cents
+  saleStartsAt   DateTime?
+  saleEndsAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@index([productId])
+}
+
+model ProductImage {
+  id                 String   @id @default(cuid())
+  productId          String
+  cloudinaryPublicId String
+  url                String
+  alt                String?
+  position           Int      @default(0) // drag-reorder
+  width              Int?
+  height             Int?
+  createdAt          DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, position])
+}
+
+// Generic Cloudinary asset library (script 06). Backs the admin media library
+// and the MediaUploader before a media item is attached to a specific entity.
+// Product-specific images still live in `ProductImage` (with a `position`);
+// `POST /media` writes here when no `productId` is supplied.
+model MediaAsset {
+  id                 String   @id @default(cuid())
+  cloudinaryPublicId String   @unique
+  url                String
+  format             String? // "jpg", "webp", "avif", ...
+  width              Int?
+  height             Int?
+  bytes              Int? // file size reported by Cloudinary
+  alt                String?
+  folder             String? // Cloudinary folder, e.g. "shopforge/products"
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+model Tag {
+  id          String       @id @default(cuid())
+  name        String
+  slug        String       @unique
+  productTags ProductTag[]
+}
+
+model ProductTag {
+  productId String
+  tagId     String
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([productId, tagId])
+  @@index([tagId])
+}
+
+// Recently-viewed products for signed-in customers (script 08, FR-224). Guests
+// get the same feature via a cookie (no row here). Capped to N per user in the
+// service; `viewedAt` is bumped on re-view so ordering is most-recent-first.
+model RecentlyViewed {
+  id        String   @id @default(cuid())
+  userId    Int
+  productId String
+  viewedAt  DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([userId, viewedAt])
+  @@index([productId])
+}
+
+// ─────────────────────────── Cart / Wishlist ───────────────────────────
+
+// One active cart per identity (script 09, FR-301): `userId` for a signed-in
+// customer, `sessionId` for a guest (signed httpOnly `cartSessionId` cookie).
+// Both are @unique-when-set (Postgres allows many NULLs), so a customer never
+// has two carts and a guest session maps to exactly one. On login the guest
+// cart is merged into the customer cart (CartService.mergeGuestCartIntoUser).
+model Cart {
+  id            String    @id @default(cuid())
+  userId        Int?      @unique // null for guest carts
+  sessionId     String?   @unique // guest identifier (merged into user cart on login)
+  couponCode    String? // applied (validated) coupon; redemption is finalized at checkout, not here
+  // Optional captured email for a GUEST cart (e.g. entered at checkout) so the
+  // abandoned-cart recovery job (script 16, FR-306) can reach anonymous shoppers.
+  guestEmail    String?
+  // Abandoned-cart recovery stage (script 16, FR-306): 0 = none sent, 1 = the
+  // 1-hour nudge sent, 2 = the 24-hour nudge sent. Ensures each stage fires at
+  // most once per cart; reset to 0 whenever the cart changes.
+  recoveryStage Int       @default(0)
+  expiresAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt // drives abandoned-cart detection (FR-306)
+
+  user  User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+}
+
+model CartItem {
+  id             String   @id @default(cuid())
+  cartId         String
+  productId      String // denormalized snapshot of the owning product (variant → product)
+  variantId      String
+  quantity       Int      @default(1)
+  // Unit price (cents) snapshotted at add-time for display / price-change hints.
+  // The AUTHORITATIVE price is always re-read from the variant on cart read.
+  unitPriceCents Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  cart    Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([cartId, variantId])
+  @@index([cartId])
+}
+
+model WishlistItem {
+  id        String   @id @default(cuid())
+  userId    Int
+  productId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([userId])
+}
+
+// ─────────────────────────── Orders / Payments ───────────────────────────
+
+model Order {
+  id          String      @id @default(cuid())
+  orderNumber String      @unique // ORD-YYYYMMDD-XXXX
+  userId      Int? // null for guest checkout
+  email       String
+  status      OrderStatus @default(PENDING)
+
+  // money — all cents
+  subtotal      Int
+  shippingTotal Int    @default(0)
+  taxTotal      Int    @default(0)
+  discountTotal Int    @default(0)
+  grandTotal    Int
+  currency      String @default("USD")
+
+  shippingAddress Json // snapshot at time of order
+  billingAddress  Json
+  couponCode      String?
+  idempotencyKey  String? @unique // dedupe checkout submissions (FR-406)
+  // Cart this order was created from — cleared on payment success (webhook), not
+  // at creation, so a failed/abandoned payment leaves the shopper's cart intact.
+  cartId          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user           User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  items          OrderItem[]
+  payments       Payment[]
+  shipmentEvents ShipmentEvent[]
+  notes          OrderNote[]
+  returnRequests ReturnRequest[]
+  redemptions    CouponRedemption[]
+  reviews        Review[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model OrderItem {
+  id             String  @id @default(cuid())
+  orderId        String
+  variantId      String?
+  productTitle   String // snapshot
+  variantOptions Json // snapshot, e.g. { "Size": "M" }
+  sku            String
+  quantity       Int
+  unitPrice      Int // cents
+  total          Int // cents
+
+  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  orderId               String
+  stripePaymentIntentId String?       @unique
+  amount                Int // cents (order grand total captured at intent creation)
+  refundedAmount        Int           @default(0) // cumulative cents refunded (FR-413)
+  currency              String        @default("USD")
+  status                PaymentStatus @default(REQUIRES_PAYMENT)
+  method                String? // "card", etc.
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+// Idempotency ledger for Stripe webhook delivery (FR-414). Stripe may deliver an
+// event more than once; we record each processed event id (the Stripe event id)
+// and skip anything already present, so payment confirmation / stock decrement
+// runs exactly once per event.
+model ProcessedWebhookEvent {
+  id          String   @id // Stripe event id (evt_...)
+  type        String
+  processedAt DateTime @default(now())
+}
+
+model ShipmentEvent {
+  id             String   @id @default(cuid())
+  orderId        String
+  status         String
+  carrier        String?
+  trackingNumber String?
+  trackingUrl    String?
+  note           String?
+  occurredAt     DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+model OrderNote {
+  id         String              @id @default(cuid())
+  orderId    String
+  authorId   Int?
+  body       String
+  visibility OrderNoteVisibility @default(INTERNAL)
+  createdAt  DateTime            @default(now())
+
+  order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+model ReturnRequest {
+  id           String       @id @default(cuid())
+  orderId      String
+  reasonCode   String
+  status       ReturnStatus @default(REQUESTED)
+  note         String?
+  // Snapshot of the requested items (script 11): [{ orderItemId, sku, productTitle,
+  // quantity, unitPrice }]. Frozen at request time so an approved refund computes
+  // the same amount even if the order later changes.
+  items        Json?
+  refundAmount Int? // cents refunded when the return was approved (FR-508)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+// ─────────────────────────── Promotions ───────────────────────────
+
+model Coupon {
+  id   String @id @default(cuid())
+  code String @unique
+
+  /// Merchant-facing label + shopper-facing blurb. The code alone is a poor
+  /// name once a store runs mass-generated batches (SUMMER-A7F3K2 …).
+  name        String?
+  description String?
+
+  /// Restriction surface — see PromotionScope. Coupons scoped to CATEGORY or
+  /// PRODUCT read their targets from the join tables below.
+  scope      PromotionScope   @default(ALL)
+  products   CouponProduct[]
+  categories CouponCategory[]
+
+  /// When false, lines already on sale are excluded from the eligible subtotal
+  /// (the usual "no double discounting" rule).
+  appliesToSaleItems Boolean @default(true)
+
+  /// Advertised on the storefront's offers strip (one-click apply). Off by
+  /// default: a code mailed to a win-back segment must not become public just
+  /// because it exists.
+  isPublic Boolean @default(false)
+
+  /// Groups codes minted together by the bulk generator, so a whole batch can be
+  /// listed, disabled or deleted as one unit.
+  batchId String?
+
+  type             CouponType
+  value            Int // whole percent (0-100) or fixed cents; ignored for FREE_SHIPPING
+  minOrder         Int? // cents
+  maxDiscount      Int? // cents — caps a PERCENT coupon's discount
+  usageLimit       Int? // total redemptions allowed across all customers
+  perCustomerLimit Int? // redemptions allowed per customer
+  usedCount        Int        @default(0) // denormalized redemption count (script 12)
+  startsAt         DateTime?
+  expiresAt        DateTime?
+  active           Boolean    @default(true)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  redemptions CouponRedemption[]
+
+  @@index([active])
+  @@index([batchId])
+  @@index([scope])
+  @@index([isPublic, active])
+}
+
+/// Coupon → product restriction (scope = PRODUCT).
+model CouponProduct {
+  couponId  String
+  productId String
+
+  coupon  Coupon  @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, productId])
+  @@index([productId])
+}
+
+/// Coupon → category restriction (scope = CATEGORY). Matching is by the
+/// category SUBTREE, so scoping to "Computers" also covers "Laptops".
+model CouponCategory {
+  couponId   String
+  categoryId String
+
+  coupon   Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, categoryId])
+  @@index([categoryId])
+}
+
+model CouponRedemption {
+  id            String   @id @default(cuid())
+  couponId      String
+  userId        Int?
+  orderId       String
+  discountCents Int      @default(0) // discount attributed to this redemption
+  createdAt     DateTime @default(now())
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, orderId]) // one redemption per coupon per order (atomic guard)
+  @@index([couponId])
+  @@index([userId])
+}
+
+model AutomaticDiscount {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+
+  rule Json // { minSubtotal?, minQty?, percentOff?, amountOff?, freeShipping? }
+
+  /// Same restriction surface as Coupon — an automatic "10% off all laptops"
+  /// rule is exactly a CATEGORY-scoped discount with no code.
+  scope      PromotionScope     @default(ALL)
+  products   DiscountProduct[]
+  categories DiscountCategory[]
+
+  appliesToSaleItems Boolean @default(true)
+
+  priority  Int            @default(0) // higher applies first (precedence)
+  status    DiscountStatus @default(ACTIVE)
+  startsAt  DateTime?
+  endsAt    DateTime?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([status])
+  @@index([priority])
+}
+
+/// Automatic discount → product restriction (scope = PRODUCT).
+model DiscountProduct {
+  discountId String
+  productId  String
+
+  discount AutomaticDiscount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  product  Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([discountId, productId])
+  @@index([productId])
+}
+
+/// Automatic discount → category restriction (scope = CATEGORY, by subtree).
+model DiscountCategory {
+  discountId String
+  categoryId String
+
+  discount AutomaticDiscount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  category Category          @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([discountId, categoryId])
+  @@index([categoryId])
+}
+
+// ─────────────────────────── Reviews ───────────────────────────
+
+model Review {
+  id           String       @id @default(cuid())
+  productId    String
+  userId       Int
+  orderId      String? // verifies purchase
+  rating       Int // 1-5
+  title        String?
+  body         String?
+  status       ReviewStatus @default(PENDING)
+  helpfulCount Int          @default(0)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  product Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order   Order?        @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  images  ReviewImage[]
+  votes   ReviewVote[]
+
+  @@unique([productId, userId]) // one review per user per product
+  @@index([productId, status])
+  @@index([userId])
+}
+
+model ReviewImage {
+  id                 String  @id @default(cuid())
+  reviewId           String
+  cloudinaryPublicId String
+  url                String
+  alt                String?
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId])
+}
+
+// One "helpful" vote per user per review (script 13, FR-704). The unique
+// (reviewId, userId) constraint makes voting idempotent; the denormalized
+// Review.helpfulCount is incremented in the same transaction as the insert.
+model ReviewVote {
+  id        String   @id @default(cuid())
+  reviewId  String
+  userId    Int
+  createdAt DateTime @default(now())
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, userId])
+  @@index([reviewId])
+  @@index([userId])
+}
+
+// ─────────────────────────── Ops / Settings ───────────────────────────
+
+model StoreSetting {
+  id                String  @id @default(cuid())
+  singleton         Boolean @unique @default(true) // enforces one row
+  name              String  @default("ShopForge")
+  logoPublicId      String?
+  contactEmail      String?
+  currency          String  @default("USD")
+  taxRules          Json? // { "US": { "rate": 700 } } etc.
+  shippingZones     Json?
+  socials           Json?
+  // Inventory low-stock alert threshold (script 15, FR-805). A variant is "low"
+  // when its stock ≤ this value; drives the dashboard alert + inventory badges.
+  lowStockThreshold Int     @default(5)
+
+  // ── Storefront chrome (script 18) ──────────────────────────────────────────
+  // Header/footer copy that is store data, not code. Kept on the settings
+  // singleton rather than in NavItem because none of it is a link.
+  /// Thin strip above the header. Hidden unless enabled AND non-empty.
+  announcementText    String?
+  announcementHref    String?
+  announcementEnabled Boolean @default(false)
+  /// Blurb under the logo in the footer's first column.
+  footerTagline       String?
+  /// Overrides the "© {store}. All rights reserved." bottom line.
+  footerNote          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    Int?
+  action     String // "product.update", "order.refund", ...
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    Int
+  type      String
+  title     String
+  body      String?
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+// ─────────────────────── Storefront content (homepage + nav) ───────────────────
+
+/// The kinds of block the homepage builder can place.
+///
+/// Every type maps to one storefront component, so this enum is the contract
+/// between the admin builder and `user_client/src/app/page.tsx`. Adding a type
+/// means adding a renderer; the storefront skips any type it doesn't recognise
+/// rather than crashing, so the two can be deployed independently.
+enum HomeSectionType {
+  HERO
+  TRUST_BAR
+  CATEGORY_RAIL
+  CATEGORY_GRID
+  PRODUCT_RAIL
+  SPOTLIGHT
+  PROMO_TILES
+  BANNER
+  BRAND_STRIP
+  TESTIMONIALS
+  FAQ
+  NEWSLETTER
+}
+
+/// Where a product rail sources its products from.
+enum ProductSource {
+  FEATURED
+  NEWEST
+  ON_SALE
+  BEST_SELLING
+  TOP_RATED
+  CATEGORY
+  TAG
+  PRICE_UNDER
+}
+
+/// One block on the homepage, in `sortOrder` order.
+///
+/// The per-type extras live in `config` rather than in 30 mostly-null columns:
+/// a PRODUCT_RAIL needs a source + category + limit, a BANNER needs artwork and
+/// a CTA, and NEWSLETTER needs nothing at all. The shared presentation fields
+/// (eyebrow/title/subtitle/link) are real columns because every type uses them
+/// and they are what the admin list renders.
+model HomepageSection {
+  id        String          @id @default(cuid())
+  type      HomeSectionType
+  eyebrow   String?
+  title     String?
+  subtitle  String?
+  /// "View all" destination + its label. Null hides the link.
+  href      String?
+  linkLabel String?
+  /// Per-type extras: { source, categoryId, tag, limit, maxPrice, imageUrl, … }
+  config    Json?
+  sortOrder Int             @default(0)
+  enabled   Boolean         @default(true)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@index([enabled, sortOrder])
+}
+
+/// One slide in the homepage hero carousel.
+///
+/// Scheduling is per slide (not per section) because that is how campaigns
+/// actually run: a Black Friday slide should appear and retire on its own
+/// without anyone editing the carousel.
+model HeroSlide {
+  id        String    @id @default(cuid())
+  eyebrow   String?
+  title     String
+  subtitle  String?
+  ctaLabel  String?
+  ctaHref   String?
+  imageId   String?
+  imageUrl  String?
+  sortOrder Int       @default(0)
+  enabled   Boolean   @default(true)
+  startsAt  DateTime?
+  endsAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([enabled, sortOrder])
+}
+
+enum NavLocation {
+  HEADER
+  FOOTER
+}
+
+/// A single navigation entry, for either the header or the footer.
+///
+/// One model serves both because the shape is identical — a label, a
+/// destination, an order and a parent. In the HEADER a parent is a dropdown
+/// trigger; in the FOOTER a parent is a column heading. Depth is capped at two
+/// levels in the service.
+///
+/// `categoryId` is an alternative to `href`: when set, the storefront derives
+/// the URL from the category's CURRENT slug, so renaming a category can never
+/// leave a dead link in the navigation.
+model NavItem {
+  id         String      @id @default(cuid())
+  location   NavLocation
+  parentId   String?
+  label      String
+  href       String?
+  categoryId String?
+  /// Lucide icon name rendered before the label.
+  icon       String?
+  /// Small pill after the label, e.g. "New" or "Sale".
+  badge      String?
+  newTab     Boolean     @default(false)
+  sortOrder  Int         @default(0)
+  enabled    Boolean     @default(true)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  parent   NavItem?  @relation("NavTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children NavItem[] @relation("NavTree")
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([location, enabled, sortOrder])
+  @@index([parentId])
+  @@index([categoryId])
+}

@@ -1,0 +1,115 @@
+# =============================================================================
+# Techistan backend, containerised.
+#
+#     cd Code
+#     cp backend/.env.docker.example backend/.env.docker   # then fill it in
+#     docker compose up --build
+#
+# This file lives at the monorepo root rather than in backend/ because the
+# backend image is built from a root-level context -- it needs shared/theme in
+# addition to backend/. See backend/Dockerfile for why.
+#
+# Three services, in the order they run:
+#   db       Postgres, the only stateful piece.
+#   migrate  One-shot. Applies pending Prisma migrations, then exits 0.
+#   api      The NestJS server. Starts only after migrate has succeeded.
+#
+# Splitting migrate out of the API's startup is deliberate. Running
+# "migrate deploy" from the app's own boot works right up until there are two
+# replicas, at which point they race for the advisory lock and a bad migration
+# takes the whole service down instead of failing one container that never
+# serves traffic.
+# =============================================================================
+
+name: techistan
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      # These credentials only ever travel over the private compose network.
+      # If you change them, change DATABASE_URL in backend/.env.docker to match
+      # -- nothing derives one from the other.
+      POSTGRES_USER: techistan
+      POSTGRES_PASSWORD: techistan
+      POSTGRES_DB: ecom
+    ports:
+      # 5433 on the host, not 5432: this is meant to sit alongside the local
+      # Postgres you already develop against, not fight it for the port.
+      # Connect with psql or Prisma Studio at localhost:5433.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Both flags matter -- bare pg_isready reports ready during the brief
+      # first-boot restart, while initdb is still creating the database.
+      test: ["CMD-SHELL", "pg_isready -U techistan -d ecom"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: migrate
+    # Named explicitly so the seed service below is the SAME image rather than
+    # a second copy of it under an auto-generated name.
+    image: techistan-migrate
+    env_file:
+      - backend/.env.docker
+    depends_on:
+      db:
+        condition: service_healthy
+    # One-shot: it must not come back after exiting 0.
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: runtime
+    restart: unless-stopped
+    env_file:
+      - backend/.env.docker
+    ports:
+      # Publish somewhere else when you are already running the backend on the
+      # host: API_PORT=3010 docker compose up. Only the host side moves -- the
+      # container, and every URL in .env.docker, still says 3000.
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # tini as PID 1. Node handles its own SIGTERM, but this reaps the zombies
+    # left by anything that shells out (the PDF and CSV export paths).
+    init: true
+
+  # Not started by "docker compose up" -- it has a profile, so it only runs when
+  # asked for by name:
+  #
+  #   docker compose run --rm seed              catalog + settings + admin
+  #   docker compose run --rm seed npm run seed:demo
+  #   docker compose run --rm seed npm run backfill:homepage
+  #
+  # Reuses the migrate image, which is the one that still has tsx.
+  seed:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: migrate
+    image: techistan-migrate
+    env_file:
+      - backend/.env.docker
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    command: ["npm", "run", "seed"]
+
+volumes:
+  pgdata:

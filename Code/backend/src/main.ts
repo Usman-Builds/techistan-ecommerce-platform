@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import cookieParser from 'cookie-parser';
 
@@ -26,16 +26,30 @@ async function bootstrap() {
   );
 
   // CORS for the two Next.js clients (cookie-based JWT needs credentials).
-  const origins = (
+  //
+  // CLIENT_ORIGINS=* opens the API to EVERY origin, for testing. It cannot be
+  // sent as a literal "Access-Control-Allow-Origin: *": browsers reject that on
+  // credentialed requests, which is every authenticated call here. Instead,
+  // `origin: true` reflects back whichever origin asked. That also means any
+  // site a logged-in user visits can call this API as that user, so never leave
+  // it on in front of real users -- set CLIENT_ORIGINS back to the exact list.
+  const rawOrigins =
     config.get<string>('CLIENT_ORIGINS') ||
-    'http://localhost:3001,http://localhost:3002'
-  )
+    'http://localhost:3001,http://localhost:3002';
+  const allowAllOrigins = rawOrigins.trim() === '*';
+  const origins = rawOrigins
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
 
+  if (allowAllOrigins) {
+    new Logger('Bootstrap').warn(
+      'CORS is open to ALL origins (CLIENT_ORIGINS=*). Testing only.',
+    );
+  }
+
   app.enableCors({
-    origin: origins,
+    origin: allowAllOrigins ? true : origins,
     credentials: true,
   });
 

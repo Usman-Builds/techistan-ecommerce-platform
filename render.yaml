@@ -99,6 +99,8 @@ services:
       # credentials, so CLIENT_ORIGINS must match the browser's origin exactly --
       # scheme, host, no trailing slash. Read the SameSite note in the runbook
       # before choosing these hostnames; it decides whether login works at all.
+      # For TESTING ONLY, CLIENT_ORIGINS=* allows every origin (see main.ts).
+      # Opening CORS does not fix the SameSite problem.
       - key: USER_APP_URL
         sync: false
       - key: ADMIN_APP_URL

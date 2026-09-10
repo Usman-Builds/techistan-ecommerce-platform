@@ -14,7 +14,8 @@ export const validationSchema: ObjectSchema<Record<string, unknown>> =
 
     PORT: Joi.number().default(3000),
 
-    // Comma-separated list of allowed client origins for CORS.
+    // Comma-separated list of allowed client origins for CORS, or "*" to allow
+    // every origin (testing only -- see main.ts).
     CLIENT_ORIGINS: Joi.string().default(
       'http://localhost:3001,http://localhost:3002',
     ),

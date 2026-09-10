@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { API_URL } from "@/lib/api/client";
+import { BACKEND_URL } from "@/lib/api/client";
 import { SITE_URL } from "@/lib/seo/site";
 
 /**
@@ -15,7 +15,7 @@ type SitemapEntry = { slug: string; updatedAt: string };
 
 async function fetchEntries(path: string): Promise<SitemapEntry[]> {
   try {
-    const res = await fetch(`${API_URL}${path}`, { next: { revalidate } });
+    const res = await fetch(`${BACKEND_URL}${path}`, { next: { revalidate } });
     if (!res.ok) return [];
     return (await res.json()) as SitemapEntry[];
   } catch {

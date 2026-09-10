@@ -11,7 +11,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useOrder, useCancelOrder } from "@/lib/api/hooks/orders";
-import { API_URL } from "@/lib/api/client";
+import { API_BASE } from "@/lib/api/client";
 import { formatMoney } from "@/lib/utils/money";
 import {
   OrderStatusBadge,
@@ -51,7 +51,7 @@ export function OrderDetailView() {
   const canCancel = order.status === "PENDING";
   const canReturn =
     order.status === "DELIVERED" || order.status === "COMPLETED";
-  const invoiceUrl = `${API_URL}/orders/${order.id}/invoice`;
+  const invoiceUrl = `${API_BASE}/orders/${order.id}/invoice`;
 
   return (
     <div className="space-y-6">

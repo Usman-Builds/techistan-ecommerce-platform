@@ -1,6 +1,6 @@
 import "server-only";
 import { cookies } from "next/headers";
-import { API_URL } from "@/lib/api/client";
+import { BACKEND_URL } from "@/lib/api/client";
 import type { User } from "@/lib/api/auth";
 
 /**
@@ -17,7 +17,7 @@ export async function getServerUser(): Promise<User | null> {
   if (!cookieHeader) return null;
 
   try {
-    const res = await fetch(`${API_URL}/auth/me`, {
+    const res = await fetch(`${BACKEND_URL}/auth/me`, {
       headers: { cookie: cookieHeader },
       cache: "no-store",
     });

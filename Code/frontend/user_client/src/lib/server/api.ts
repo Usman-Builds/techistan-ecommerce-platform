@@ -1,4 +1,4 @@
-import { API_URL } from "@/lib/api/client";
+import { BACKEND_URL } from "@/lib/api/client";
 
 /**
  * Server-side GET for SSR/SEO reads in Server Components (script 14). Hits the
@@ -13,7 +13,7 @@ import { API_URL } from "@/lib/api/client";
  */
 export async function serverGet<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
+    const res = await fetch(`${BACKEND_URL}${path}`, { cache: "no-store" });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {

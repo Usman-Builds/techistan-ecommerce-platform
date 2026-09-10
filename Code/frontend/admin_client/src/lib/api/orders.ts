@@ -3,7 +3,7 @@
  * `@AdminOnly()`-guarded `/admin/orders` routes through the credentialed
  * `apiClient` — RBAC is enforced server-side (NFR-208). Money is integer cents.
  */
-import { apiClient, API_URL } from "./client";
+import { apiClient, API_BASE } from "./client";
 
 export type OrderStatus =
   | "PENDING"
@@ -206,5 +206,5 @@ export function rejectReturn(
 
 /** Top-level navigable invoice URL (cookie auth travels on the GET). */
 export function invoiceUrl(id: string): string {
-  return `${API_URL}/admin/orders/${id}/invoice`;
+  return `${API_BASE}/admin/orders/${id}/invoice`;
 }

@@ -1,7 +1,13 @@
 /**
  * Typed fetch wrapper around the Techistan NestJS backend.
- * Sends the JWT httpOnly cookie on every request (`credentials: "include"`),
- * so CORS on the backend must allow this origin with credentials (see backend main.ts).
+ * Sends the JWT httpOnly cookie on every request (`credentials: "include"`).
+ *
+ * Routing: the BROWSER never calls the backend host directly. It calls the
+ * same-origin `/api/*` prefix, which next.config.ts rewrites to the backend.
+ * That keeps the auth cookies first-party on this app's own host, so they
+ * survive `SameSite=Lax` when the API lives on another site (e.g. two separate
+ * *.onrender.com hosts), and proxy.ts / server components can read them.
+ * Server-side code has no browser cookie jar and calls BACKEND_URL directly.
  *
  * Session continuity (script 04, Task 15): on a 401 the client makes a single
  * silent `POST /auth/refresh` and retries the original request once. If the
@@ -9,7 +15,13 @@
  * redirect to /login.
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
+/** The NestJS backend. Use it only from server-side code. */
+export const BACKEND_URL = (
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000"
+).replace(/\/+$/, "");
+
+/** Same-origin prefix for browser requests and links, proxied to BACKEND_URL. */
+export const API_BASE = "/api";
 
 export class ApiError extends Error {
   constructor(
@@ -34,7 +46,8 @@ const NO_REFRESH_RETRY = new Set([
 
 async function doFetch(path: string, options: RequestOptions): Promise<Response> {
   const { body, headers, ...rest } = options;
-  return fetch(`${API_URL}${path}`, {
+  const base = typeof window === "undefined" ? BACKEND_URL : API_BASE;
+  return fetch(`${base}${path}`, {
     ...rest,
     credentials: "include",
     headers: {
@@ -90,5 +103,3 @@ export const apiClient = {
   delete: <T>(path: string, options?: RequestOptions) =>
     request<T>(path, { ...options, method: "DELETE" }),
 };
-
-export { API_URL };

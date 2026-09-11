@@ -243,7 +243,7 @@ export class OrderService {
    * are only serialized for an admin caller.
    */
   async getOrder(id: string, actor: OrderActor | null) {
-    const order = await this.prisma.order.findUnique({
+    let order = await this.prisma.order.findUnique({
       where: { id },
       include: ORDER_DETAIL_INCLUDE,
     });
@@ -255,7 +255,44 @@ export class OrderService {
       const isOwner = actor?.userId === order.userId;
       if (!isOwner && !isAdmin) throw new NotFoundException('Order not found');
     }
+
+    // The confirmation page polls this until the order leaves PENDING. If the
+    // Stripe webhook is missing or late, settle the payment from Stripe directly.
+    if (await this.reconcilePendingPayment(order)) {
+      order =
+        (await this.prisma.order.findUnique({
+          where: { id },
+          include: ORDER_DETAIL_INCLUDE,
+        })) ?? order;
+    }
     return OrderService.toDetail(order, { includeInternalNotes: isAdmin });
+  }
+
+  /**
+   * Webhook fallback for an order still awaiting payment: ask Stripe for the
+   * intent's real state (see PaymentService.reconcile). Runs only after the
+   * caller passed the read check above. Returns true when the order changed.
+   */
+  private async reconcilePendingPayment(order: {
+    id: string;
+    status: OrderStatus;
+    payments: { status: PaymentStatus }[];
+  }): Promise<boolean> {
+    const latest = order.payments[0];
+    if (
+      order.status !== OrderStatus.PENDING ||
+      (latest?.status !== PaymentStatus.PROCESSING &&
+        latest?.status !== PaymentStatus.REQUIRES_PAYMENT)
+    ) {
+      return false;
+    }
+    const payment = await this.prisma.payment.findFirst({
+      where: { orderId: order.id },
+      orderBy: { createdAt: 'desc' },
+      select: { stripePaymentIntentId: true },
+    });
+    if (!payment?.stripePaymentIntentId) return false;
+    return this.payment.reconcile(payment.stripePaymentIntentId);
   }
 
   /** List the signed-in customer's orders (most recent first), with filters. */

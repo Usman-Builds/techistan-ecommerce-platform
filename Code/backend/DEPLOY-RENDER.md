@@ -165,4 +165,5 @@ Then log into the admin client with `ADMIN_EMAIL` / `ADMIN_PASSWORD` — that ex
 | `Config validation error: "X" is not allowed to be empty` | A `sync: false` variable was left blank. Joi lists every offender at once. |
 | `Can't reach database server` | `DATABASE_URL` typo, or you used the direct host where the pooled one belongs. |
 | Login returns 401 on every request after a successful login | The SameSite problem. See blocker 3. |
+| Checkout sits on "Payment processing…" | Stripe has no webhook endpoint for this API, or `STRIPE_WEBHOOK_SECRET` is not that endpoint's `whsec_...`. See Step 4. The order page settles the payment from Stripe's API as a fallback, but only while someone has it open, so the webhook is still what confirms everything else. |
 | Build fails at `gen:brand` | The build context is wrong. It must be the repo root, not `backend/`. |

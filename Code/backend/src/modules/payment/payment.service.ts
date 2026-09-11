@@ -32,12 +32,26 @@ interface CreateIntentInput {
 }
 
 /**
+ * Payment states a success may move out of. FAILED is included because a
+ * declined card can be retried on the same intent.
+ */
+const UNPAID_STATUSES = [
+  PaymentStatus.REQUIRES_PAYMENT,
+  PaymentStatus.PROCESSING,
+  PaymentStatus.FAILED,
+];
+
+/** Minimum gap between Stripe lookups for one intent while its order is polled. */
+export const RECONCILE_INTERVAL_MS = 5_000;
+
+/**
  * Payment domain (script 10, FR-406/410/413/414). All Stripe calls funnel through
  * here; the client only ever handles a PaymentIntent `clientSecret` (NFR-207 — no
  * card data touches this server). The webhook (verified against the raw body) is
- * the single source of truth for payment state: it confirms the order, decrements
- * stock, finalizes coupon redemption, and clears the cart — exactly once per
- * event, deduped through {@link ProcessedWebhookEvent}.
+ * the primary source of payment state, and {@link PaymentService.reconcile} reads
+ * the same state from Stripe's API when the webhook is missing or late. Either
+ * path confirms the order, decrements stock, finalizes coupon redemption, and
+ * clears the cart — exactly once.
  */
 @Injectable()
 export class PaymentService {
@@ -51,11 +65,11 @@ export class PaymentService {
     private readonly audit: AuditService,
     private readonly notifier: NotifierService,
   ) {
-    // The webhook is the ONLY thing that confirms an order. Without a secret we
-    // reject every delivery, so a paid order silently sits in PENDING forever
-    // and the shopper stares at "Payment processing…". Joi allows this outside
-    // production (so the app boots before keys are wired), which makes a boot
-    // warning the only signal — same treatment EmailService gives RESEND_API_KEY.
+    // Without a secret we reject every webhook delivery, so a paid order only
+    // confirms when a client happens to poll it (reconcile). An order whose tab
+    // was closed stays PENDING. Joi allows this outside production (so the app
+    // boots before keys are wired), which makes a boot warning the only signal —
+    // same treatment EmailService gives RESEND_API_KEY.
     if (!this.config.get<string>('stripe.webhookSecret')) {
       this.logger.warn(
         'STRIPE_WEBHOOK_SECRET is not set — webhooks will be rejected and paid ' +
@@ -79,9 +93,10 @@ export class PaymentService {
 
   /**
    * Create (or reuse) a Stripe PaymentIntent for an order and persist its id on
-   * the pending Payment row. Automatic payment methods are enabled so the client
-   * Payment Element can offer cards, Apple Pay, and Google Pay. Returns the
-   * client secret the browser needs to confirm payment.
+   * the pending Payment row. Card is the only accepted method, so the Payment
+   * Element shows just the card form. Automatic payment methods would instead add
+   * whatever the Stripe Dashboard has enabled (Klarna, Link, Cash App, ...).
+   * Returns the client secret the browser needs to confirm payment.
    */
   async createIntent(input: CreateIntentInput): Promise<{ clientSecret: string }> {
     const stripe = this.client();
@@ -89,7 +104,7 @@ export class PaymentService {
       {
         amount: input.amountCents,
         currency: input.currency.toLowerCase(),
-        automatic_payment_methods: { enabled: true },
+        payment_method_types: ['card'],
         metadata: { orderId: input.orderId },
       },
       // Stripe-level idempotency: a retried POST /orders with the same key returns
@@ -121,6 +136,55 @@ export class PaymentService {
     return intent.client_secret ?? null;
   }
 
+  // ─────────────────────────── Webhook fallback ──────────────────────────────
+
+  private readonly lastReconciled = new Map<string, number>();
+
+  /**
+   * Settle a payment from Stripe's API when the webhook has not. Called while a
+   * client polls a still-pending order, so the order confirms even when no webhook
+   * endpoint is registered, or the delivery hit a sleeping free-plan instance and
+   * Stripe's next retry is an hour away. The state still comes from Stripe, never
+   * from the browser, and it goes through the same exactly-once guard as the
+   * webhook. Best-effort: a Stripe error is logged and the order is left as is.
+   *
+   * @returns true when this call changed the payment.
+   */
+  async reconcile(paymentIntentId: string): Promise<boolean> {
+    if (!this.stripe) return false;
+
+    // The client polls every 2s; one Stripe lookup per intent per interval is plenty.
+    const now = Date.now();
+    const last = this.lastReconciled.get(paymentIntentId) ?? 0;
+    if (now - last < RECONCILE_INTERVAL_MS) return false;
+    this.lastReconciled.set(paymentIntentId, now);
+    if (this.lastReconciled.size > 1000) {
+      for (const [id, at] of this.lastReconciled) {
+        if (now - at >= RECONCILE_INTERVAL_MS) this.lastReconciled.delete(id);
+      }
+    }
+
+    try {
+      const intent = await this.stripe.paymentIntents.retrieve(paymentIntentId);
+      if (intent.status === 'succeeded') {
+        return await this.markSucceeded(intent);
+      }
+      if (
+        intent.status === 'requires_payment_method' &&
+        intent.last_payment_error
+      ) {
+        return await this.markFailed(intent);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Could not reconcile intent ${paymentIntentId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    return false;
+  }
+
   // ─────────────────────────── Webhook (FR-414) ──────────────────────────────
 
   /** Verify a webhook signature against the raw body; throws on any mismatch. */
@@ -144,10 +208,10 @@ export class PaymentService {
   async handleEvent(event: Stripe.Event): Promise<void> {
     switch (event.type) {
       case 'payment_intent.succeeded':
-        await this.onPaymentSucceeded(event);
+        await this.markSucceeded(event.data.object, event);
         break;
       case 'payment_intent.payment_failed':
-        await this.onPaymentFailed(event);
+        await this.markFailed(event.data.object, event);
         break;
       default:
         this.logger.debug(`Ignoring unhandled event type: ${event.type}`);
@@ -155,19 +219,28 @@ export class PaymentService {
   }
 
   /**
-   * Confirm an order on payment success — all-or-nothing in one transaction that
-   * also inserts the event id, so Stripe redelivery (or a concurrent duplicate)
-   * can never double-decrement stock or double-record a redemption.
+   * Confirm an order on payment success, all-or-nothing in one transaction. The
+   * webhook passes its event, whose id is recorded so a redelivery is ignored;
+   * {@link reconcile} passes none. Either way the conditional status update is
+   * the exactly-once guard: only one transaction can move the payment out of an
+   * unpaid state (a concurrent one waits on the row lock, then matches nothing),
+   * so stock and coupon side effects are never applied twice.
+   *
+   * @returns true when this call confirmed the order.
    */
-  private async onPaymentSucceeded(event: Stripe.Event): Promise<void> {
-    const intent = event.data.object as Stripe.PaymentIntent;
+  private async markSucceeded(
+    intent: Stripe.PaymentIntent,
+    event?: Stripe.Event,
+  ): Promise<boolean> {
     let confirmed: OrderForConfirmation | null = null;
     try {
       confirmed = await this.prisma.$transaction(async (tx) => {
-        // Idempotency anchor: unique PK → throws P2002 on a duplicate event.
-        await tx.processedWebhookEvent.create({
-          data: { id: event.id, type: event.type },
-        });
+        // Idempotency anchor for redelivery: unique PK → throws P2002 on a duplicate.
+        if (event) {
+          await tx.processedWebhookEvent.create({
+            data: { id: event.id, type: event.type },
+          });
+        }
 
         const payment = await tx.payment.findUnique({
           where: { stripePaymentIntentId: intent.id },
@@ -175,22 +248,22 @@ export class PaymentService {
         });
         if (!payment) {
           this.logger.warn(
-            `payment_intent.succeeded for unknown intent ${intent.id}.`,
+            `Payment succeeded for unknown intent ${intent.id}.`,
           );
           return null;
         }
         const order = payment.order;
 
-        // Defensive guard: never re-apply side effects to an already-paid order.
-        if (payment.status === PaymentStatus.SUCCEEDED) return null;
-
-        await tx.payment.update({
-          where: { id: payment.id },
+        const { count } = await tx.payment.updateMany({
+          where: { id: payment.id, status: { in: UNPAID_STATUSES } },
           data: {
             status: PaymentStatus.SUCCEEDED,
             method: intent.payment_method_types?.[0] ?? payment.method,
           },
         });
+        // Already paid (or refunded): never re-apply side effects.
+        if (count === 0) return null;
+
         await tx.order.update({
           where: { id: order.id },
           data: { status: OrderStatus.CONFIRMED },
@@ -223,7 +296,9 @@ export class PaymentService {
         }
 
         this.logger.log(
-          `Order ${order.orderNumber} CONFIRMED (intent ${intent.id}).`,
+          `Order ${order.orderNumber} CONFIRMED (intent ${intent.id}, ${
+            event ? 'webhook' : 'reconciled'
+          }).`,
         );
 
         // Return the receipt data so the confirmation email + new-order alert are
@@ -253,49 +328,65 @@ export class PaymentService {
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        this.logger.debug(`Duplicate webhook event ${event.id} ignored.`);
-        return;
+        this.logger.debug(`Duplicate webhook event ${event?.id} ignored.`);
+        return false;
       }
       throw err;
     }
 
     // Post-commit: confirmation receipt + admin new-order alert (best-effort).
-    if (confirmed) {
-      void this.notifier.orderConfirmed(confirmed);
-    }
+    if (!confirmed) return false;
+    void this.notifier.orderConfirmed(confirmed);
+    return true;
   }
 
   /**
    * Mark a failed payment. The order is left PENDING (not cancelled) so the
    * shopper can retry from the recovery path with a fresh attempt; stock was
-   * never decremented, so nothing to release.
+   * never decremented, so nothing to release. Event handling matches
+   * {@link markSucceeded}.
+   *
+   * @returns true when this call changed the payment.
    */
-  private async onPaymentFailed(event: Stripe.Event): Promise<void> {
-    const intent = event.data.object as Stripe.PaymentIntent;
+  private async markFailed(
+    intent: Stripe.PaymentIntent,
+    event?: Stripe.Event,
+  ): Promise<boolean> {
     try {
-      await this.prisma.$transaction(async (tx) => {
-        await tx.processedWebhookEvent.create({
-          data: { id: event.id, type: event.type },
-        });
+      return await this.prisma.$transaction(async (tx) => {
+        if (event) {
+          await tx.processedWebhookEvent.create({
+            data: { id: event.id, type: event.type },
+          });
+        }
         const payment = await tx.payment.findUnique({
           where: { stripePaymentIntentId: intent.id },
         });
-        if (!payment) return;
-        if (payment.status === PaymentStatus.SUCCEEDED) return; // already paid
-        await tx.payment.update({
-          where: { id: payment.id },
+        if (!payment) return false;
+
+        // Never downgrade a payment that already succeeded or was refunded.
+        const { count } = await tx.payment.updateMany({
+          where: {
+            id: payment.id,
+            status: {
+              in: [PaymentStatus.REQUIRES_PAYMENT, PaymentStatus.PROCESSING],
+            },
+          },
           data: { status: PaymentStatus.FAILED },
         });
+        if (count === 0) return false;
+
         this.logger.warn(
           `Payment failed for intent ${intent.id} (order ${payment.orderId}).`,
         );
+        return true;
       });
     } catch (err) {
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        return;
+        return false;
       }
       throw err;
     }

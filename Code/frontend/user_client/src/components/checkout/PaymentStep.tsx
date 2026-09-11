@@ -12,11 +12,12 @@ import { getStripe } from "@/lib/stripe";
 import { formatMoney } from "@/lib/utils/money";
 
 /**
- * Checkout step 3 — payment (FR-410). Renders the Stripe Payment Element (cards,
- * Apple Pay, Google Pay) inside <Elements>. Card data is entered directly into
- * Stripe's iframe and sent to Stripe — it never touches our server (NFR-207). On
- * success we hand off to the confirmation page, which polls the order until the
- * webhook confirms it (the redirect alone is not trusted).
+ * Checkout step 3 — payment (FR-410). Renders the Stripe Payment Element inside
+ * <Elements>, card only: the backend creates the PaymentIntent with just `card`,
+ * and the Apple Pay / Google Pay buttons are switched off below. Card data is
+ * entered directly into Stripe's iframe and sent to Stripe — it never touches our
+ * server (NFR-207). On success we hand off to the confirmation page, which polls
+ * the order until the server confirms it (the redirect alone is not trusted).
  */
 export function PaymentStep({
   clientSecret,
@@ -107,8 +108,8 @@ function PaymentForm({
     const { error: stripeError, paymentIntent } = await stripe.confirmPayment({
       elements,
       confirmParams: {
-        // Methods that require a redirect (e.g. some wallets) return here; the
-        // page then polls the order for the webhook-confirmed status.
+        // Only used if Stripe has to redirect, which is rare for cards (3-D
+        // Secure normally opens in a modal). The page then polls the order.
         return_url: `${window.location.origin}/checkout/confirmation?orderId=${orderId}`,
       },
       redirect: "if_required",
@@ -125,7 +126,7 @@ function PaymentForm({
       (paymentIntent.status === "succeeded" ||
         paymentIntent.status === "processing")
     ) {
-      onPaid(); // hand off to confirmation (webhook is the source of truth)
+      onPaid(); // hand off to confirmation (the server is the source of truth)
       return;
     }
 
@@ -135,7 +136,13 @@ function PaymentForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
-      <PaymentElement />
+      <PaymentElement
+        options={{
+          // Wallets are card-backed, so Stripe would still offer them on a
+          // card-only PaymentIntent. Card only means the card form alone.
+          wallets: { applePay: "never", googlePay: "never" },
+        }}
+      />
 
       {error && (
         <p className="text-sm text-destructive" role="alert">

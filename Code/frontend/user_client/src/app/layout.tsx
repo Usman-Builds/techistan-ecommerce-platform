@@ -54,7 +54,8 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     twitter: { card: "summary_large_image", title: name, description },
     robots: { index: true, follow: true },
-    icons: { icon: "/favicon.ico" },
+    // Icons come from the app/ file conventions (favicon.ico, icon.svg,
+    // apple-icon.png), which emit their own <link> tags.
   };
 }
 

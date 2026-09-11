@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The Techistan mark (src/components/brand/Logo.tsx): same tile, same
+       chamfered T. On the page the T is punched out of the tile; here it is
+       painted near-black instead, so it stays legible on light AND dark browser
+       tabs. favicon.ico and apple-icon.png are rendered from this shape. -->
+  <path fill="#FFCC00" d="M7 0h18a7 7 0 0 1 7 7v18a7 7 0 0 1-7 7H7a7 7 0 0 1-7-7V7a7 7 0 0 1 7-7Z"/>
+  <path fill="#0A0A0A" d="M7.2 8.4h17.6l-3.2 4.8h-3.3v10.6h-4.6V13.2H7.2V8.4Z"/>
+</svg>

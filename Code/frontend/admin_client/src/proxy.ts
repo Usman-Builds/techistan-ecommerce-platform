@@ -26,6 +26,6 @@ export function proxy(request: NextRequest) {
 export const config = {
   // Match everything except /login, Next internals, and static/metadata files.
   matcher: [
-    "/((?!login|api|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)",
+    "/((?!login|api|_next/static|_next/image|favicon.ico|icon.svg|apple-icon.png|sitemap.xml|robots.txt).*)",
   ],
 };

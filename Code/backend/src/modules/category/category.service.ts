@@ -161,10 +161,12 @@ export class CategoryService {
 
   /**
    * Flat slug + updatedAt feed for the storefront `sitemap.ts` (script 17).
-   * All categories are public (no visibility flag), so every row is included.
+   * Hidden categories (`isActive = false`) 404 on the storefront, so they are
+   * left out rather than advertised to crawlers (#32).
    */
   sitemapEntries(): Promise<{ slug: string; updatedAt: Date }[]> {
     return this.prisma.category.findMany({
+      where: { isActive: true },
       select: { slug: true, updatedAt: true },
       orderBy: { updatedAt: 'desc' },
     });

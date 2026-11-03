@@ -162,7 +162,7 @@ export class PgSearchProvider implements SearchProvider {
       >(Prisma.sql`
         SELECT "id" AS id, "name" AS name, "slug" AS slug, "imageUrl"
         FROM "Category"
-        WHERE "name" ILIKE ${like}
+        WHERE "isActive" = true AND "name" ILIKE ${like}
         ORDER BY ("name" ILIKE ${prefix}) DESC, "name" ASC
         LIMIT 3
       `),
@@ -315,7 +315,7 @@ export class PgSearchProvider implements SearchProvider {
       this.prisma.$queryRaw<CategoryFacet[]>(Prisma.sql`
         SELECT c."slug" AS slug, c."name" AS name, COUNT(*)::int AS count
         FROM "Product" p JOIN "Category" c ON c."id" = p."categoryId"
-        WHERE ${this.whereClause(params, tsq, 'category')}
+        WHERE c."isActive" = true AND ${this.whereClause(params, tsq, 'category')}
         GROUP BY c."slug", c."name"
         ORDER BY count DESC, c."name" ASC
         LIMIT 50

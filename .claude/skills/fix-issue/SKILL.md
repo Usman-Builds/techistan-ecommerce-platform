@@ -77,5 +77,5 @@ gh pr create -R Usman-Builds/techistan-ecommerce-platform --base main --head fix
   --label "module:<m>"
 gh issue comment <n> -R Usman-Builds/techistan-ecommerce-platform --body "Fix proposed in <PR url>. Test gate green locally; CI running."
 ```
-- Optionally run `gh pr checks <pr> --watch` once to report the CI result. If CI fails, fix it on the same branch (back to step 5) and push again.
+- Optionally run `gh pr checks <pr> --watch` once to report the CI result. If CI fails, follow `../fix-ci/SKILL.md` on the same branch to get it green.
 - **Do not merge.** Report the PR URL, what was fixed, the tests added and the gate summary. Remind the user that merging closes #<n> automatically.

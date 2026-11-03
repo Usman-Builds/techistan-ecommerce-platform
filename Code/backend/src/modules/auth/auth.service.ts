@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   UnauthorizedException,
@@ -50,12 +51,18 @@ export class AuthService {
     email: string;
     password: string;
   }): Promise<IssuedTokens> {
+    const email = data.email.trim().toLowerCase();
+    // Older rows may be stored mixed-case, so the unique index alone can't
+    // catch "ADA@x.com" vs "ada@x.com" (#21).
+    if (await this.findUserByEmail(email)) {
+      throw new ConflictException('An account with this email already exists.');
+    }
     const hashed = await bcrypt.hash(data.password, BCRYPT_COST);
     const user = await this.prisma.user.create({
       data: {
         firstName: data.firstName,
         lastName: data.lastName,
-        email: data.email,
+        email,
         password: hashed,
         provider: 'LOCAL',
         role: 'CUSTOMER', // FR: new sign-ups are customers (belt-and-suspenders)
@@ -70,9 +77,20 @@ export class AuthService {
     return this.issueTokens(user);
   }
 
+  /**
+   * Case-insensitive lookup (#21). New sign-ups are stored lowercase, but rows
+   * created before that may be mixed-case and must still be found.
+   */
+  private findUserByEmail(email: string) {
+    return this.prisma.user.findFirst({
+      where: { email: { equals: email.trim(), mode: 'insensitive' } },
+      orderBy: { id: 'asc' },
+    });
+  }
+
   // ── Credential validation (local) ─────────────────────────────────────────
   async validateUser(email: string, password: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.findUserByEmail(email);
     if (!user || !user.password)
       throw new UnauthorizedException('Invalid credentials');
 
@@ -132,7 +150,7 @@ export class AuthService {
 
   // Always returns generic success (no account enumeration).
   async resendVerification(email: string): Promise<{ success: true }> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.findUserByEmail(email);
     if (user && user.provider === 'LOCAL' && !user.emailVerified) {
       await this.issueVerificationEmail(user.id, user.email);
     }
@@ -142,7 +160,7 @@ export class AuthService {
   // ── Password reset ────────────────────────────────────────────────────────
   // Always returns generic success (no account enumeration).
   async forgotPassword(email: string): Promise<{ success: true }> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.findUserByEmail(email);
     if (user) {
       const raw = randomBytes(32).toString('hex');
       await this.prisma.passwordResetToken.create({

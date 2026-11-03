@@ -1,4 +1,6 @@
-# Deploying the backend to Render
+# Deploying Techistan to Render
+
+All three services run on Render: the API (Docker) and both Next.js clients (Node). See [Frontends on Render](#frontends-on-render) for the clients.
 
 The image already builds and runs (`docker compose up` works end to end), so the container side of this is done. What follows is everything *around* it.
 
@@ -70,7 +72,11 @@ Both Next.js clients avoid this. The browser calls the client's own `/api/*`, an
 
 ### Step 1 — Push, then create the Blueprint
 
-In Render: **New → Blueprint**, pick the repo, and it will read `render.yaml`. It creates one web service, `techistan-api`, in **Ohio** — deliberately the same region as your Neon project in `us-east-2`. That matters: the connection test measured ~233 ms per query from here, and essentially all of that is distance. Same region takes it to single digits.
+In Render: **New → Blueprint**, pick the repo, and it will read `render.yaml`. It creates three web services in **Oregon**: the API `techistan-ecommerce-platform`, the storefront `techistan` and the admin `techistan-admin`.
+
+> **Region.** The live services were created in Oregon, and `render.yaml` matches them. Neon is in `us-east-2` (Ohio), so every query crosses the country: the connection test measured ~233 ms per query at that distance, and same-region takes it to single digits. Moving all three services to `ohio` is the single biggest latency win available. Render cannot move a service, so that means recreating them.
+>
+> **Existing services.** These services were created by hand and the blueprint was written to match them afterwards. Syncing the blueprint into the same workspace would try to create services with names that already exist. Use it to rebuild from scratch, or link it via the dashboard after checking the plan it shows.
 
 ### Step 2 — Fill in the secrets
 
@@ -139,6 +145,45 @@ Then log into the admin client with `ADMIN_EMAIL` / `ADMIN_PASSWORD` — that ex
 
 ---
 
+## Frontends on Render
+
+Both Next.js clients are Render **web services** (runtime `node`), not static sites. They need a running server for the `/api/*` rewrite, `proxy.ts` and server components.
+
+| Service | URL | Build / start (from the repo root) |
+| --- | --- | --- |
+| `techistan` (storefront) | https://techistan.onrender.com | `cd Code/frontend/user_client && npm ci && npm run build` / `... && npx next start -p $PORT` |
+| `techistan-admin` | https://techistan-admin.onrender.com | same, with `admin_client` |
+
+`-p $PORT` matters. The `start` scripts in `package.json` hard-code 3001/3002 for local dev, and Render routes to the port it injects.
+
+**Environment.** Everything `NEXT_PUBLIC_*` is baked in **at build time**, so changing one needs a redeploy:
+
+| Variable | Storefront | Admin |
+| --- | --- | --- |
+| `NODE_VERSION` | `22` (Next 16 needs ≥ 20.9) | `22` |
+| `NEXT_PUBLIC_API_URL` | the API's URL | the API's URL |
+| `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME` | the Cloudinary cloud | same |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | the `pk_` matching the API's `sk_` | n/a |
+| `NEXT_PUBLIC_SITE_URL` | the storefront's own URL | n/a |
+| `NEXT_PUBLIC_STOREFRONT_URL` | n/a | the storefront's URL |
+| `PROXY_SECRET` | **same value as the API** | **same value as the API** |
+
+And on the API, `USER_APP_URL` / `ADMIN_APP_URL` must be the clients' URLs (they go into emails and Stripe return links), with both listed in `CLIENT_ORIGINS`.
+
+### `PROXY_SECRET`: why it is not optional
+
+Every browser call goes through a client's `/api/*` rewrite, and server components call the API directly. So **all** traffic reaches the API from the client server's single IP. The API rate limiter (100/min, and 5 logins per 15 min) keys on IP, so without help every visitor shares one bucket. The storefront hits it within seconds of normal browsing: `/api/cart` returns 429 and the catalog renders empty.
+
+The fix: each client sends the visitor's IP in `x-client-ip` together with `x-proxy-secret: $PROXY_SECRET`, from `proxy.ts` (for the rewrite) and from `lib/server/*` (for server-side fetches). The API's `ProxyAwareThrottlerGuard` honours `x-client-ip` **only** when the secret matches, so nobody can choose their own bucket to dodge the login limit. Without the secret the API falls back to `req.ip`, which is correct for direct callers.
+
+Set the same random value on all three services (`openssl rand -base64 32`). Rotating it means updating all three. For the few seconds while they disagree, requests just fall back to per-server buckets.
+
+### Auto-deploy
+
+All three services track `main` with **Auto-Deploy: On Commit**. Every push to `main` redeploys all three, even if only one app changed. That is deliberate. Adding Render build filters (`Code/backend/**`, `Code/frontend/user_client/**`, …) would make each service rebuild only for its own code.
+
+---
+
 ## What you do *not* need
 
 - **Object storage on Render.** Cloudinary covers it, and the app never writes to disk — I checked; there are no `writeFileSync`/`createWriteStream` calls, and the PDF and CSV exports stream straight to the response. So Render's ephemeral filesystem is fine and you do not need a paid persistent disk.
@@ -166,4 +211,5 @@ Then log into the admin client with `ADMIN_EMAIL` / `ADMIN_PASSWORD` — that ex
 | `Can't reach database server` | `DATABASE_URL` typo, or you used the direct host where the pooled one belongs. |
 | Login returns 401 on every request after a successful login | The SameSite problem. See blocker 3. |
 | Checkout sits on "Payment processing…" | Stripe has no webhook endpoint for this API, or `STRIPE_WEBHOOK_SECRET` is not that endpoint's `whsec_...`. See Step 4. The order page settles the payment from Stripe's API as a fallback, but only while someone has it open, so the webhook is still what confirms everything else. |
+| `429 Too Many Requests` on `/api/*` for every visitor, catalog empty | `PROXY_SECRET` missing or different between the API and a client. See [`PROXY_SECRET`](#proxy_secret-why-it-is-not-optional). |
 | Build fails at `gen:brand` | The build context is wrong. It must be the repo root, not `backend/`. |

@@ -290,8 +290,13 @@ export async function loadRailProducts(
 export async function loadSpotlightProduct(
   productSlug?: string,
 ): Promise<ProductDetail | null> {
+  // The spotlight is optional chrome: an API error just hides the block rather
+  // than failing the homepage (the PDP lookup now throws on non-404 errors).
+  const lookup = (slug: string) =>
+    getProductBySlugServer(slug).catch(() => null);
+
   if (productSlug) {
-    const chosen = await getProductBySlugServer(productSlug);
+    const chosen = await lookup(productSlug);
     if (chosen) return chosen;
   }
 
@@ -301,5 +306,5 @@ export async function loadSpotlightProduct(
     pageSize: 1,
   });
   const fallback = feed.items[0];
-  return fallback ? getProductBySlugServer(fallback.slug) : null;
+  return fallback ? lookup(fallback.slug) : null;
 }

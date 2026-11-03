@@ -8,8 +8,8 @@ the system is, how it is built, and which parts are worth talking about.
 | **Type**          | Full-stack e-commerce platform (storefront + admin console + REST API)                                     |
 | **Role**          | Sole developer — architecture, database, backend, both frontends, deployment                                |
 | **Status**        | Deployed and running end to end (test-mode payments)                                                       |
-| **Storefront**    | https://techistan.vercel.app                                                                               |
-| **Admin console** | https://techistanadmin.vercel.app                                                                          |
+| **Storefront**    | https://techistan.onrender.com                                                                            |
+| **Admin console** | https://techistan-admin.onrender.com                                                                     |
 | **API**           | NestJS service on Render, PostgreSQL on Neon                                                               |
 | **Stack**         | TypeScript, NestJS 11, Prisma 6, PostgreSQL, Next.js 16, React 19, Tailwind, Stripe, Cloudinary, Resend, Docker |
 
@@ -25,7 +25,7 @@ the system is, how it is built, and which parts are worth talking about.
 | Storefront        | 19 routes (App Router)                                                     |
 | Admin console     | 25 routes                                                                  |
 | Automated tests   | 213 unit tests (32 suites), 10 API integration specs, 7 Playwright E2E specs |
-| Deployment        | 3 services: Docker API on Render, two Next.js apps on Vercel, Neon Postgres |
+| Deployment        | 3 services: Docker API on Render, two Next.js apps on Render, Neon Postgres |
 
 ---
 
@@ -37,10 +37,10 @@ never ships admin code and each can be deployed, scaled and secured on its own.
 
 ```
 Browser ──► Next.js storefront ─┐                  ┌─► Neon PostgreSQL (Prisma)
-           (Vercel)             │                  │
+           (Render)             │                  │
                                 ├─► NestJS API ────┼─► Stripe (payments, webhooks)
 Browser ──► Next.js admin ──────┘   (Render,       ├─► Cloudinary (media)
-           (Vercel)                  Docker)       └─► Resend (transactional email)
+           (Render)                  Docker)       └─► Resend (transactional email)
 ```
 
 **Request path.** Browsers never call the API host directly. Each Next app
@@ -64,7 +64,7 @@ point. Roles: `CUSTOMER`, `ADMIN`, `SUPER_ADMIN`.
 | **Frontends**    | Next.js 16 (App Router, RSC), React 19, TanStack Query, Zustand, React Hook Form + Zod, Tailwind CSS, Framer Motion, next-themes |
 | **Integrations** | Stripe (Payment Element + webhooks), Cloudinary (signed direct uploads), Resend + React Email, PDFKit invoices        |
 | **Testing**      | Jest, Supertest, Vitest, Testing Library, Playwright, Lighthouse CI                                                  |
-| **Infra**        | Multi-stage Docker (Debian slim, non-root), Render blueprint (`render.yaml`), Vercel, GitHub                         |
+| **Infra**        | Multi-stage Docker (Debian slim, non-root), Render blueprint (`render.yaml`), GitHub                         |
 
 ---
 
@@ -162,7 +162,7 @@ TypeScript runs strict across all three apps, with ESLint and Prettier enforced.
 
 - **API:** Docker image built from a Render blueprint, health check at `/health`,
   auto-deploy on commit, secrets held in the dashboard and never in the repo.
-- **Frontends:** Vercel, with the API URL baked in at build time.
+- **Frontends:** two Node web services on Render, auto-deploy on commit, with the API URL baked in at build time.
 - **Database:** Neon serverless Postgres; pooled connection for the app, direct
   connection for migrations (advisory locks cannot cross a transaction pooler).
 - **Seeding:** idempotent scripts for the admin account, catalog and a full demo
@@ -192,8 +192,8 @@ Ready to paste, trim to taste:
   avoiding a separate search service.
 - Wrote 213 unit tests plus API integration and Playwright end-to-end coverage,
   and set up Lighthouse CI budgets.
-- Containerised the API in a multi-stage Docker image and deployed across Render,
-  Vercel and Neon with an operational runbook.
+- Containerised the API in a multi-stage Docker image and deployed on Render
+  and Neon with an operational runbook.
 
 ---
 

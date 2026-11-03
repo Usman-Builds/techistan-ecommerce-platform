@@ -6,8 +6,8 @@ schema, API, both frontends, payments, deployment — as a solo project.
 
 | | |
 | --- | --- |
-| **Storefront** | [techistan.vercel.app](https://techistan.vercel.app) |
-| **Admin console** | [techistanadmin.vercel.app](https://techistanadmin.vercel.app) |
+| **Storefront** | [techistan.onrender.com](https://techistan.onrender.com) |
+| **Admin console** | [techistan-admin.onrender.com](https://techistan-admin.onrender.com) |
 | **API** | NestJS on Render · PostgreSQL on Neon |
 | **Stack** | TypeScript, NestJS 11, Prisma 6, PostgreSQL, Next.js 16, React 19, Tailwind, Stripe, Cloudinary, Resend, Docker |
 | **Status** | Deployed and running end to end (Stripe in test mode) |
@@ -18,10 +18,10 @@ schema, API, both frontends, payments, deployment — as a solo project.
 
 ```
 Browser ──► Next.js storefront ─┐                  ┌─► Neon PostgreSQL (Prisma)
-           (Vercel)             │                  │
+           (Render)             │                  │
                                  ├─► NestJS API ────┼─► Stripe (payments, webhooks)
 Browser ──► Next.js admin ──────┘   (Render,        ├─► Cloudinary (media)
-           (Vercel)                  Docker)        └─► Resend (transactional email)
+           (Render)                  Docker)        └─► Resend (transactional email)
 ```
 
 Browsers never call the API host directly — each Next app proxies `/api/*` to
@@ -147,7 +147,7 @@ image bytes ever pass through the API.
 | **Frontends** | Next.js 16 (App Router, RSC), React 19, TanStack Query, Zustand, React Hook Form + Zod, Tailwind CSS, Framer Motion, next-themes |
 | **Integrations** | Stripe (Payment Element + webhooks), Cloudinary (signed direct uploads), Resend + React Email, PDFKit invoices |
 | **Testing** | Jest, Supertest, Vitest, Testing Library, Playwright, Lighthouse CI |
-| **Infra** | Multi-stage Docker (Debian slim, non-root), Render blueprint (`render.yaml`), Vercel, GitHub |
+| **Infra** | Multi-stage Docker (Debian slim, non-root), Render blueprint (`render.yaml`), GitHub |
 
 **Scale:** ~55,600 lines of TypeScript across 490 files · 26 backend feature
 modules, 35 controllers, 159 HTTP endpoints · 39 Prisma models, 16 enums, 15
@@ -220,7 +220,7 @@ TypeScript runs strict across all three apps, with ESLint and Prettier enforced.
 
 - **API:** Docker image built from a Render blueprint (`render.yaml`), health
   check at `/health`, auto-deploy on commit, secrets held in the dashboard.
-- **Frontends:** Vercel, with the API URL baked in at build time.
+- **Frontends:** two Node web services on Render, auto-deploy on commit, with the API URL baked in at build time.
 - **Database:** Neon serverless Postgres — pooled connection for the app,
   direct connection for migrations.
 - **Seeding:** idempotent scripts for the admin account, catalog and a full

@@ -160,6 +160,15 @@ export class OrderService {
       where: { id: cartId },
       select: { couponCode: true },
     });
+
+    // A guest's checkout email is the only way to reach them if they leave
+    // before paying: store it on the cart for abandoned-cart recovery (#48).
+    if (userId == null) {
+      await this.prisma.cart.updateMany({
+        where: { id: cartId, userId: null },
+        data: { guestEmail: dto.email },
+      });
+    }
     const coupon = await this.resolveCoupon(
       cart?.couponCode ?? null,
       subtotal,

@@ -13,10 +13,23 @@ const PAID_STATUSES: OrderStatus[] = [
 
 const BATCH = 500;
 
-/** RFC-4180 field escaping: quote when the value contains a comma/quote/newline. */
-function csvField(value: string | number | null | undefined): string {
+/**
+ * One CSV cell. Text that a spreadsheet would treat as a formula (leading
+ * = + - @ TAB or CR) gets a leading apostrophe so customer-controlled names and
+ * emails can't run formulas when an admin opens the export (#39, OWASP "CSV
+ * injection"). Plain numbers such as "-5.00" stay numbers. Then RFC-4180
+ * escaping: quote when the value contains a comma/quote/newline.
+ */
+export function csvField(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return '';
-  const s = String(value);
+  let s = String(value);
+  if (
+    typeof value === 'string' &&
+    /^[=+\-@\t\r]/.test(s) &&
+    !/^[-+]?\d+(\.\d+)?$/.test(s)
+  ) {
+    s = `'${s}`;
+  }
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }

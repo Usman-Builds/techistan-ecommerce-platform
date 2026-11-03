@@ -39,8 +39,12 @@ export default function EditCouponPage() {
 
   const onDelete = async () => {
     if (!confirm(`Delete coupon ${coupon.code}? This cannot be undone.`)) return;
-    await del.mutateAsync(coupon.id);
-    router.push("/coupons");
+    try {
+      await del.mutateAsync(coupon.id);
+      router.push("/coupons");
+    } catch {
+      // Shown below: a used coupon can only be deactivated (#44).
+    }
   };
 
   return (
@@ -59,6 +63,11 @@ export default function EditCouponPage() {
           <Trash2 className="h-4 w-4" aria-hidden /> Delete
         </button>
       </div>
+      {del.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {del.error.message}
+        </p>
+      )}
 
       <div className="grid gap-8 lg:grid-cols-[1fr_20rem]">
         <div>

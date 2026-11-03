@@ -8,6 +8,7 @@ import {
 import {
   CouponType,
   DiscountStatus,
+  OrderStatus,
   Prisma,
   ProductStatus,
   PromotionScope,
@@ -828,6 +829,9 @@ export class CouponService {
     const data: Prisma.CouponUpdateInput = {};
     if (dto.code !== undefined) {
       const code = dto.code.trim().toUpperCase();
+      if (code !== current.code.toUpperCase()) {
+        await this.assertCodeChangeable(current);
+      }
       await this.assertCodeAvailable(code, id);
       data.code = code;
     }
@@ -903,9 +907,22 @@ export class CouponService {
     return updated;
   }
 
+  /**
+   * Delete an unused coupon. One that pending orders depend on, or that has
+   * been redeemed, can only be deactivated (#44): deleting it would skip those
+   * orders' redemptions and cascade-delete the redemption history.
+   */
   async deleteCoupon(id: string, actorId: number | null) {
-    await this.getCoupon(id);
-    await this.prisma.coupon.delete({ where: { id } }); // cascades redemptions
+    const coupon = await this.getCoupon(id);
+    const usage = await this.couponUsage(coupon);
+    if (usage.redemptions > 0 || usage.pendingOrders > 0) {
+      throw new BadRequestException(
+        usage.pendingOrders > 0
+          ? 'Unpaid orders are using this coupon, so it can’t be deleted. Deactivate it instead.'
+          : 'This coupon has already been used, so it can’t be deleted. Deactivate it instead.',
+      );
+    }
+    await this.prisma.coupon.delete({ where: { id } });
     await this.audit.record({
       actorId,
       action: 'coupon.delete',
@@ -913,6 +930,37 @@ export class CouponService {
       entityId: id,
     });
     return { id, deleted: true };
+  }
+
+  /**
+   * How much depends on a coupon's code (#44). Orders and carts store the code,
+   * not the coupon id, and the redemption at payment time looks the coupon up
+   * by that code, so PENDING orders pin it. Matching is case-insensitive, like
+   * the lookup.
+   */
+  private async couponUsage(coupon: { id: string; code: string }) {
+    const [redemptions, pendingOrders] = await Promise.all([
+      this.prisma.couponRedemption.count({ where: { couponId: coupon.id } }),
+      this.prisma.order.count({
+        where: {
+          status: OrderStatus.PENDING,
+          couponCode: { equals: coupon.code, mode: 'insensitive' },
+        },
+      }),
+    ]);
+    return { redemptions, pendingOrders };
+  }
+
+  /** Refuse to rename a code that orders already depend on (#44). */
+  private async assertCodeChangeable(coupon: { id: string; code: string }) {
+    const usage = await this.couponUsage(coupon);
+    if (usage.redemptions > 0 || usage.pendingOrders > 0) {
+      throw new BadRequestException(
+        usage.pendingOrders > 0
+          ? 'Unpaid orders are using this code, so it can’t be renamed yet. Create a new coupon instead.'
+          : 'This code has already been used, so it can’t be renamed. Create a new coupon instead.',
+      );
+    }
   }
 
   /** Redemption history + count for a coupon (FR-605 detail view). */

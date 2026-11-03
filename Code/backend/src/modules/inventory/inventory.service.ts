@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -217,17 +221,38 @@ export class InventoryService {
     };
   }
 
-  /** Set a variant's absolute on-hand stock. Audited. */
-  async adjust(variantId: string, stock: number, actorId?: number) {
+  /**
+   * Set a variant's absolute on-hand stock. Audited.
+   *
+   * Optimistic concurrency (#17): the write only applies while the row still
+   * holds `expectedStock` (the value the admin saw) — or, for callers that don't
+   * send it, the value read here. A sale committed in between makes this a 409
+   * instead of silently overwriting the decrement.
+   */
+  async adjust(
+    variantId: string,
+    stock: number,
+    actorId?: number,
+    expectedStock?: number,
+  ) {
     const existing = await this.prisma.productVariant.findUnique({
       where: { id: variantId },
       select: { id: true, stock: true },
     });
     if (!existing) throw new NotFoundException('Variant not found');
 
-    const updated = await this.prisma.productVariant.update({
-      where: { id: variantId },
+    const from = expectedStock ?? existing.stock;
+    const { count } = await this.prisma.productVariant.updateMany({
+      where: { id: variantId, stock: from },
       data: { stock },
+    });
+    if (count === 0) {
+      throw new ConflictException(
+        'Stock changed since you loaded it. Review the current value and save again.',
+      );
+    }
+    const updated = await this.prisma.productVariant.findUniqueOrThrow({
+      where: { id: variantId },
       select: VARIANT_SELECT,
     });
 
@@ -236,14 +261,14 @@ export class InventoryService {
       action: 'inventory.adjust',
       entityType: 'ProductVariant',
       entityId: variantId,
-      metadata: { from: existing.stock, to: stock },
+      metadata: { from, to: stock },
     });
 
     const threshold = await this.threshold();
 
     // Admin low-stock alert (FR-902) — fire only on a downward crossing, so the
     // bell isn't re-pinged for every adjustment while a variant stays low.
-    if (stock <= threshold && existing.stock > threshold) {
+    if (stock <= threshold && from > threshold) {
       void this.notifier.lowStock({
         variantId: updated.id,
         productId: updated.product.id,

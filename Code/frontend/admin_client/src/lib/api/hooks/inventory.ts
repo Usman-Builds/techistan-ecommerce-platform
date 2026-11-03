@@ -32,8 +32,16 @@ export function useLowStock() {
 export function useAdjustStock() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ variantId, stock }: { variantId: string; stock: number }) =>
-      adjustStock(variantId, stock),
+    mutationFn: ({
+      variantId,
+      stock,
+      expectedStock,
+    }: {
+      variantId: string;
+      stock: number;
+      /** The on-hand value shown when the admin typed `stock` (#17). */
+      expectedStock?: number;
+    }) => adjustStock(variantId, stock, expectedStock),
     onMutate: async ({ variantId, stock }) => {
       await qc.cancelQueries({ queryKey: INVENTORY_KEY });
       const snapshots = qc.getQueriesData<InventoryResponse>({ queryKey: INVENTORY_KEY });

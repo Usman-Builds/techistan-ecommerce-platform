@@ -87,6 +87,18 @@ export function getLowStock(): Promise<LowStockResponse> {
   return apiClient.get<LowStockResponse>("/admin/inventory/low-stock");
 }
 
-export function adjustStock(variantId: string, stock: number): Promise<InventoryItem> {
-  return apiClient.patch<InventoryItem>(`/admin/inventory/${variantId}`, { stock });
+/**
+ * Set a variant's on-hand stock. `expectedStock` is the value the admin was
+ * looking at; the API answers 409 if a sale changed it meanwhile (#17), so a
+ * stale screen can't overwrite a concurrent decrement.
+ */
+export function adjustStock(
+  variantId: string,
+  stock: number,
+  expectedStock?: number,
+): Promise<InventoryItem> {
+  return apiClient.patch<InventoryItem>(`/admin/inventory/${variantId}`, {
+    stock,
+    ...(expectedStock === undefined ? {} : { expectedStock }),
+  });
 }

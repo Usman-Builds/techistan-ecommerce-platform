@@ -91,7 +91,13 @@ function StockCell({ item }: { item: InventoryItem }) {
   const save = () => {
     const n = parseInt(value, 10);
     if (!Number.isFinite(n) || n < 0) return;
-    adjust.mutate({ variantId: item.variantId, stock: n });
+    // Send the server value we last saw so a concurrent sale yields a 409
+    // instead of being overwritten (#17).
+    adjust.mutate({
+      variantId: item.variantId,
+      stock: n,
+      expectedStock: lastServer,
+    });
   };
 
   return (
@@ -118,6 +124,19 @@ function StockCell({ item }: { item: InventoryItem }) {
           <Check className="h-4 w-4" aria-hidden />
         )}
       </button>
+      {adjust.isError && (
+        <span
+          role="alert"
+          title={
+            adjust.error instanceof Error
+              ? adjust.error.message
+              : "Couldn't save stock"
+          }
+          className="text-xs text-destructive"
+        >
+          Not saved
+        </span>
+      )}
     </div>
   );
 }

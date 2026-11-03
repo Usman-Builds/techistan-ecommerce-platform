@@ -26,6 +26,11 @@ export class AdminInventoryController {
     @Body() dto: AdjustStockDto,
     @CurrentUser('userId') actorId: number,
   ) {
-    return this.inventory.adjust(variantId, dto.stock, actorId);
+    return this.inventory.adjust(
+      variantId,
+      dto.stock,
+      actorId,
+      dto.expectedStock,
+    );
   }
 }

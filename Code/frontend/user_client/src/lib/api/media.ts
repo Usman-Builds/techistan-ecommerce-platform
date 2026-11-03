@@ -84,6 +84,23 @@ export function saveMedia(payload: SaveMediaPayload): Promise<SavedMedia> {
   return apiClient.post<SavedMedia>("/media", payload);
 }
 
+/**
+ * Customer review photos (#33). `/media` is the admin library and answers 403
+ * to customers; these sign uploads into the reviews folder only and record the
+ * customer as the uploader.
+ */
+export function requestReviewUploadSignature(): Promise<UploadSignature> {
+  return apiClient.post<UploadSignature>("/reviews/media/upload-signature", {});
+}
+
+export function saveReviewMedia(payload: {
+  cloudinaryPublicId: string;
+  url: string;
+  alt?: string;
+}): Promise<SavedMedia> {
+  return apiClient.post<SavedMedia>("/reviews/media", payload);
+}
+
 export function deleteMedia(
   publicId: string,
 ): Promise<{ publicId: string; deleted: boolean; cloudinaryDestroyed: boolean }> {

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MediaController } from './media.controller';
+import { ReviewMediaController } from './review-media.controller';
 import { MediaService } from './media.service';
 import { CloudinaryProvider } from './cloudinary.provider';
 
@@ -9,7 +10,7 @@ import { CloudinaryProvider } from './cloudinary.provider';
  * product/review flows (scripts 07, 13).
  */
 @Module({
-  controllers: [MediaController],
+  controllers: [MediaController, ReviewMediaController],
   providers: [MediaService, CloudinaryProvider],
   exports: [MediaService],
 })

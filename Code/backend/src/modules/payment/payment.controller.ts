@@ -9,6 +9,7 @@ import {
   Req,
 } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { AdminOnly, CurrentUser } from '../../common';
 import { PaymentService } from './payment.service';
@@ -23,8 +24,12 @@ export class PaymentController {
    * request; we verify that signature against the RAW body (captured via
    * `rawBody: true` in main.ts). Always ack 200 on a handled/ignored event so
    * Stripe stops retrying; signature failures throw 400 so Stripe retries.
+   * Exempt from the per-IP throttle (#30): Stripe sends from a small pool of
+   * IPs, so a burst of events would otherwise get 429s and leave paid orders
+   * PENDING until Stripe's next retry.
    */
   @Post('webhook')
+  @SkipThrottle()
   @HttpCode(200)
   async webhook(
     @Req() req: RawBodyRequest<Request>,

@@ -70,6 +70,40 @@ describe('RBAC on /admin/* (e2e)', () => {
       .expect(200);
   });
 
+  // #23: the leftover scaffold `/users` CRUD let any signed-in customer list
+  // every user (with password hashes), rewrite an admin's email and delete
+  // accounts. No client uses it, so none of its routes may be reachable.
+  describe('legacy /users routes are not exposed', () => {
+    const routes: Array<[string, (s: request.Agent) => request.Test]> = [
+      ['GET /users', (s) => s.get('/users')],
+      ['GET /users/:id', (s) => s.get('/users/1')],
+      ['POST /users', (s) => s.post('/users').send({})],
+      ['PUT /users/:id', (s) => s.put('/users/1').send({ email: 'x@y.z' })],
+      ['DELETE /users/:id', (s) => s.delete('/users/1')],
+    ];
+
+    it.each(routes)('%s returns 404 for a CUSTOMER token', async (_, call) => {
+      const res = await call(request.agent(app.getHttpServer())).set(
+        'Authorization',
+        `Bearer ${customerToken}`,
+      );
+      expect(res.status).toBe(404);
+      expect(JSON.stringify(res.body)).not.toMatch(/password|refreshToken/);
+    });
+
+    it('leaves the admin account untouched after a customer attempt', async () => {
+      const before = await prisma.user.findUniqueOrThrow({
+        where: { email: 'admin@example.com' },
+      });
+      await request(app.getHttpServer())
+        .put(`/users/${before.id}`)
+        .set('Authorization', `Bearer ${customerToken}`)
+        .send({ email: 'attacker@example.com' });
+      const after = await prisma.user.findUnique({ where: { id: before.id } });
+      expect(after?.email).toBe('admin@example.com');
+    });
+  });
+
   it('blocks a CUSTOMER from the admin login endpoint (403)', () => {
     return request(app.getHttpServer())
       .post('/auth/admin/login')

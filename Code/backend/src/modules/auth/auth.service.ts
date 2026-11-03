@@ -45,12 +45,18 @@ export class AuthService {
   ) {}
 
   // ── Registration (local) ──────────────────────────────────────────────────
+  /**
+   * Create a LOCAL customer and send the verification link. No session is
+   * issued (#19): login is gated on a verified email (FR-101), so signing the
+   * new account in here would let anyone operate an account under an address
+   * they don't control. The user signs in after verifying.
+   */
   async register(data: {
     firstName: string;
     lastName: string;
     email: string;
     password: string;
-  }): Promise<IssuedTokens> {
+  }): Promise<{ user: PublicUser }> {
     const email = data.email.trim().toLowerCase();
     // Older rows may be stored mixed-case, so the unique index alone can't
     // catch "ADA@x.com" vs "ada@x.com" (#21).
@@ -74,7 +80,7 @@ export class AuthService {
     // registration on delivery.
     await this.issueVerificationEmail(user.id, user.email);
 
-    return this.issueTokens(user);
+    return { user: this.toPublicUser(user) };
   }
 
   /**
@@ -221,6 +227,15 @@ export class AuthService {
       where: { id: payload.sub },
     });
     if (!user || !user.refreshToken) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+    // Same gates as login (#19): an unverified LOCAL account or a banned or
+    // erased one can't keep a session alive by refreshing.
+    if (
+      (user.provider === 'LOCAL' && !user.emailVerified) ||
+      user.status === 'BANNED' ||
+      user.status === 'DELETED'
+    ) {
       throw new UnauthorizedException('Invalid refresh token');
     }
 

@@ -81,12 +81,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email: string;
       password: string;
     }) => {
+      // No session comes back (#19): the shopper stays signed out until they
+      // verify their email and log in, which is also when the cart merges.
       const { user } = await authApi.register(input);
-      await invalidateMe(queryClient);
-      await reconcileCart();
       return user;
     },
-    [queryClient, reconcileCart],
+    [],
   );
 
   const logout = useCallback(async () => {

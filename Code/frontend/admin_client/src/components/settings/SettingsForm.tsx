@@ -6,6 +6,10 @@ import type { StoreSettings, UpdateSettingsInput } from "@/lib/api/settings";
 import { useUpdateSettings } from "@/lib/api/hooks/settings";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ApiError } from "@/lib/api/client";
+import {
+  parseShippingZones,
+  SHIPPING_ZONES_PLACEHOLDER,
+} from "@/lib/shipping-zones";
 
 const CURRENCIES = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "INR"];
 const SOCIAL_KEYS = ["twitter", "facebook", "instagram", "youtube", "tiktok"] as const;
@@ -14,7 +18,7 @@ const inputClass =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const labelClass = "block text-sm font-medium";
 
-function jsonToText(v: Record<string, unknown> | null): string {
+function jsonToText(v: Record<string, unknown> | unknown[] | null): string {
   return v ? JSON.stringify(v, null, 2) : "";
 }
 
@@ -72,7 +76,7 @@ export function SettingsForm({ initial }: { initial: StoreSettings }) {
             )
           : null,
       taxRules: parseJson(taxRulesText, "Tax rules"),
-      shippingZones: parseJson(shippingZonesText, "Shipping zones"),
+      shippingZones: parseShippingZones(shippingZonesText),
     };
   };
 
@@ -271,7 +275,7 @@ export function SettingsForm({ initial }: { initial: StoreSettings }) {
               onChange={(e) => setShippingZonesText(e.target.value)}
               rows={8}
               spellCheck={false}
-              placeholder={'{\n  "DEFAULT": { "flat": 500, "freeOver": 5000 }\n}'}
+              placeholder={SHIPPING_ZONES_PLACEHOLDER}
               className={`${inputClass} font-mono text-xs`}
             />
           </div>

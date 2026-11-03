@@ -4,6 +4,7 @@
  * Currency/logo changes reflect on the storefront (shared settings source).
  */
 import { apiClient } from "./client";
+import type { ShippingZone } from "../shipping-zones";
 
 export interface StoreSettings {
   id: string;
@@ -13,7 +14,7 @@ export interface StoreSettings {
   contactEmail: string | null;
   currency: string;
   taxRules: Record<string, unknown> | null;
-  shippingZones: Record<string, unknown> | null;
+  shippingZones: ShippingZone[] | null;
   socials: Record<string, string> | null;
   lowStockThreshold: number;
   // Storefront chrome (script 18) — header strip + footer copy.
@@ -32,7 +33,7 @@ export interface UpdateSettingsInput {
   contactEmail?: string | null;
   currency?: string;
   taxRules?: Record<string, unknown> | null;
-  shippingZones?: Record<string, unknown> | null;
+  shippingZones?: ShippingZone[] | null;
   socials?: Record<string, string> | null;
   lowStockThreshold?: number;
   announcementText?: string | null;

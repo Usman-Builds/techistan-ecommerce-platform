@@ -179,7 +179,12 @@ export class EmailService {
 
   async sendOrderStatus(
     to: string,
-    data: { orderNumber: string; headline: string; message: string; subject: string },
+    data: {
+      orderNumber: string;
+      headline: string;
+      message: string;
+      subject: string;
+    },
   ): Promise<void> {
     const branding = await this.loadBranding();
     void this.enqueueEmail({
@@ -229,7 +234,13 @@ export class EmailService {
 
   async sendAdminAlert(
     to: string | string[],
-    data: { subject: string; heading: string; message: string; ctaLabel?: string; ctaUrl?: string },
+    data: {
+      subject: string;
+      heading: string;
+      message: string;
+      ctaLabel?: string;
+      ctaUrl?: string;
+    },
   ): Promise<void> {
     const branding = await this.loadBranding();
     void this.enqueueEmail({
@@ -248,17 +259,15 @@ export class EmailService {
   // ──────────────────────────────── URLs ─────────────────────────────────────
 
   userUrl(): string {
-    return (this.config.get<string>('userAppUrl') || 'http://localhost:3001').replace(
-      /\/$/,
-      '',
-    );
+    return (
+      this.config.get<string>('userAppUrl') || 'http://localhost:3001'
+    ).replace(/\/$/, '');
   }
 
   adminUrl(): string {
-    return (this.config.get<string>('adminAppUrl') || 'http://localhost:3002').replace(
-      /\/$/,
-      '',
-    );
+    return (
+      this.config.get<string>('adminAppUrl') || 'http://localhost:3002'
+    ).replace(/\/$/, '');
   }
 
   private orderUrl(orderNumber: string): string {

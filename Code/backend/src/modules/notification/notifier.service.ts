@@ -55,7 +55,10 @@ export class NotifierService {
 
   // ─────────────────────────────── Auth ──────────────────────────────────────
 
-  async welcome(user: { email: string; firstName: string | null }): Promise<void> {
+  async welcome(user: {
+    email: string;
+    firstName: string | null;
+  }): Promise<void> {
     await this.email.sendWelcome(user.email, user.firstName);
   }
 
@@ -114,7 +117,11 @@ export class NotifierService {
   /** Shipment created: tracking email + customer bell (+ optional SMS). */
   async orderShipped(
     order: OrderRef,
-    shipment: { carrier: string; trackingNumber: string; trackingUrl: string | null },
+    shipment: {
+      carrier: string;
+      trackingNumber: string;
+      trackingUrl: string | null;
+    },
   ): Promise<void> {
     try {
       await this.email.sendShipping(order.email, {

@@ -6,9 +6,10 @@ import { OrderService } from './order.service';
  * (the service retries on collision). Here we pin the format and the very low
  * collision rate of the suffix. The method is private+static, reached by name.
  */
-const generate = (
-  OrderService as unknown as { generateOrderNumber(): string }
-).generateOrderNumber;
+const generate = (): string =>
+  (
+    OrderService as unknown as { generateOrderNumber(): string }
+  ).generateOrderNumber();
 
 describe('OrderService.generateOrderNumber', () => {
   it('matches the ORD-YYYYMMDD-NNNN format', () => {

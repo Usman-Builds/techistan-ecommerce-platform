@@ -7,11 +7,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  OrderStatus,
-  PaymentStatus,
-  Prisma,
-} from '@prisma/client';
+import { OrderStatus, PaymentStatus, Prisma } from '@prisma/client';
 import Stripe from 'stripe';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -98,7 +94,9 @@ export class PaymentService {
    * whatever the Stripe Dashboard has enabled (Klarna, Link, Cash App, ...).
    * Returns the client secret the browser needs to confirm payment.
    */
-  async createIntent(input: CreateIntentInput): Promise<{ clientSecret: string }> {
+  async createIntent(
+    input: CreateIntentInput,
+  ): Promise<{ clientSecret: string }> {
     const stripe = this.client();
     const intent = await stripe.paymentIntents.create(
       {
@@ -414,7 +412,9 @@ export class PaymentService {
       (p) => p.status === PaymentStatus.SUCCEEDED || p.refundedAmount > 0,
     );
     if (!payment || !payment.stripePaymentIntentId) {
-      throw new BadRequestException('This order has no captured payment to refund.');
+      throw new BadRequestException(
+        'This order has no captured payment to refund.',
+      );
     }
 
     const refundable = payment.amount - payment.refundedAmount;
@@ -467,7 +467,12 @@ export class PaymentService {
 
     // Notify the customer their refund is on the way (email + in-app bell).
     void this.notifier.refundProcessed(
-      { id: order.id, orderNumber: order.orderNumber, email: order.email, userId: order.userId },
+      {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        email: order.email,
+        userId: order.userId,
+      },
       { amountCents: amount, currency: order.currency },
     );
 

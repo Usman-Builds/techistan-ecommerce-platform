@@ -6,8 +6,7 @@ export default () => ({
   },
 
   clientOrigins:
-    process.env.CLIENT_ORIGINS ||
-    'http://localhost:3001,http://localhost:3002',
+    process.env.CLIENT_ORIGINS || 'http://localhost:3001,http://localhost:3002',
 
   // Storefront base URL (verification and password-reset links).
   userAppUrl: process.env.USER_APP_URL || 'http://localhost:3001',

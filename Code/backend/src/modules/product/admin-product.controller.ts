@@ -70,10 +70,7 @@ export class AdminProductController {
   }
 
   @Post(':id/duplicate')
-  duplicate(
-    @Param('id') id: string,
-    @CurrentUser('userId') actorId: number,
-  ) {
+  duplicate(@Param('id') id: string, @CurrentUser('userId') actorId: number) {
     return this.products.duplicate(id, actorId);
   }
 

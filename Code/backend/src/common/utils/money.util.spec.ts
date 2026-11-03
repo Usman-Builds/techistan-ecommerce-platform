@@ -28,7 +28,10 @@ describe('formatMoney (integer cents → display)', () => {
 
   it('sums integer cents with no floating-point drift', () => {
     // Ten 10¢ line items = exactly $1.00, never $0.9999999.
-    const total = Array.from({ length: 10 }, () => 10).reduce((a, b) => a + b, 0);
+    const total = Array.from({ length: 10 }, () => 10).reduce(
+      (a, b) => a + b,
+      0,
+    );
     expect(total).toBe(100);
     expect(formatMoney(total, 'USD')).toBe('$1.00');
   });

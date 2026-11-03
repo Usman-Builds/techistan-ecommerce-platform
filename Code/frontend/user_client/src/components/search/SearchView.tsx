@@ -35,7 +35,9 @@ export function SearchView() {
   const pathname = usePathname();
 
   // Parse the URL into a filter object (memoized on the raw query string).
+  const qs = sp.toString();
   const filters = useMemo<SearchQuery>(() => {
+    const sp = new URLSearchParams(qs);
     const category = sp.getAll("category");
     const brand = sp.getAll("brand");
     return {
@@ -49,8 +51,7 @@ export function SearchView() {
       sort: (sp.get("sort") as SortOption) ?? undefined,
       page: numParam(sp.get("page")) ?? 1,
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sp.toString()]);
+  }, [qs]);
 
   const queryParams = useMemo<SearchQuery>(
     () => ({ ...filters, pageSize: PAGE_SIZE }),

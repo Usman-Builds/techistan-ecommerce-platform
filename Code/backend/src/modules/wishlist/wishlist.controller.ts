@@ -37,10 +37,7 @@ export class WishlistController {
   }
 
   @Delete('items/:productId')
-  remove(
-    @Param('productId') productId: string,
-    @CurrentUser() user: AuthUser,
-  ) {
+  remove(@Param('productId') productId: string, @CurrentUser() user: AuthUser) {
     return this.wishlist.remove(user.userId, productId);
   }
 

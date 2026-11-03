@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 
 /** Debounce window for suggestions — NFR-106 requires ≤200ms. */
 const DEBOUNCE_MS = 180;
+const NO_SUGGESTIONS: Suggestion[] = [];
 
 /**
  * Header autocomplete (FR-223). Debounced ≤200ms, keyboard-navigable (↑/↓/Enter/
@@ -38,14 +39,16 @@ export function SearchAutocomplete({
     return () => clearTimeout(t);
   }, [value]);
 
-  const { data: suggestions = [], isFetching } = useSuggest(
-    open ? debounced : "",
-  );
+  const { data, isFetching } = useSuggest(open ? debounced : "");
+  const suggestions = data ?? NO_SUGGESTIONS;
 
-  // Reset the active row whenever the suggestion set changes.
-  useEffect(() => {
+  // Reset the active row whenever the suggestion set changes (during render,
+  // not in an effect). `NO_SUGGESTIONS` is stable so this can't loop.
+  const [shown, setShown] = useState(suggestions);
+  if (shown !== suggestions) {
+    setShown(suggestions);
     setActive(-1);
-  }, [suggestions]);
+  }
 
   // Close on outside click.
   useEffect(() => {

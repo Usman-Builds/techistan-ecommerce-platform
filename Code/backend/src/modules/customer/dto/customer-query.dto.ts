@@ -1,13 +1,6 @@
 import { Transform } from 'class-transformer';
 import { UserStatus } from '@prisma/client';
-import {
-  IsEnum,
-  IsInt,
-  IsOptional,
-  IsString,
-  Max,
-  Min,
-} from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 /**
  * Admin customer-list filters (script 15, FR-804). Scoped to CUSTOMER-role users;

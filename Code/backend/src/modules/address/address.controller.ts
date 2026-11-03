@@ -26,18 +26,12 @@ export class AddressController {
   }
 
   @Post()
-  create(
-    @CurrentUser('userId') userId: number,
-    @Body() dto: CreateAddressDto,
-  ) {
+  create(@CurrentUser('userId') userId: number, @Body() dto: CreateAddressDto) {
     return this.addresses.create(userId, dto);
   }
 
   @Delete(':id')
-  remove(
-    @CurrentUser('userId') userId: number,
-    @Param('id') id: string,
-  ) {
+  remove(@CurrentUser('userId') userId: number, @Param('id') id: string) {
     return this.addresses.remove(userId, id);
   }
 }

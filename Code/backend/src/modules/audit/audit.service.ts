@@ -74,7 +74,8 @@ export class AuditService {
 
     const where: Prisma.AuditLogWhereInput = {};
     if (filter.actorId !== undefined) where.actorId = filter.actorId;
-    if (filter.action) where.action = { contains: filter.action, mode: 'insensitive' };
+    if (filter.action)
+      where.action = { contains: filter.action, mode: 'insensitive' };
     if (filter.entityType)
       where.entityType = { contains: filter.entityType, mode: 'insensitive' };
     if (filter.from || filter.to) {
@@ -87,7 +88,9 @@ export class AuditService {
       this.prisma.auditLog.findMany({
         where,
         include: {
-          actor: { select: { id: true, firstName: true, lastName: true, email: true } },
+          actor: {
+            select: { id: true, firstName: true, lastName: true, email: true },
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * pageSize,

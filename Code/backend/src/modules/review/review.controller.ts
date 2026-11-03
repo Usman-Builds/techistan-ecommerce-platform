@@ -33,10 +33,7 @@ export class ReviewController {
 
   @Post()
   @UseGuards(JwtAuthGuard)
-  create(
-    @Body() dto: CreateReviewDto,
-    @CurrentUser('userId') userId: number,
-  ) {
+  create(@Body() dto: CreateReviewDto, @CurrentUser('userId') userId: number) {
     return this.reviews.create(userId, dto);
   }
 

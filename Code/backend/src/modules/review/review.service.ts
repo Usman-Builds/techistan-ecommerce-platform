@@ -91,7 +91,7 @@ export class ReviewService {
 
     const images = await this.resolveReviewImages(dto.mediaIds);
 
-    let review;
+    let review: Prisma.ReviewGetPayload<{ include: { images: true } }>;
     try {
       review = await this.prisma.review.create({
         data: {
@@ -172,7 +172,10 @@ export class ReviewService {
     let votedSet = new Set<string>();
     if (currentUserId && rows.length) {
       const votes = await this.prisma.reviewVote.findMany({
-        where: { userId: currentUserId, reviewId: { in: rows.map((r) => r.id) } },
+        where: {
+          userId: currentUserId,
+          reviewId: { in: rows.map((r) => r.id) },
+        },
         select: { reviewId: true },
       });
       votedSet = new Set(votes.map((v) => v.reviewId));
@@ -191,7 +194,13 @@ export class ReviewService {
     }));
 
     // Fill all five buckets so the client always has a complete distribution.
-    const stars: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    const stars: Record<1 | 2 | 3 | 4 | 5, number> = {
+      1: 0,
+      2: 0,
+      3: 0,
+      4: 0,
+      5: 0,
+    };
     for (const d of distribution) {
       stars[d.rating as 1 | 2 | 3 | 4 | 5] = d._count.rating;
     }
@@ -203,7 +212,10 @@ export class ReviewService {
       pageSize,
       aggregate: {
         // Expose the ×100 integer as a float for the client (null when no reviews).
-        average: product && product.ratingCount > 0 ? product.ratingAverage / 100 : null,
+        average:
+          product && product.ratingCount > 0
+            ? product.ratingAverage / 100
+            : null,
         count: product?.ratingCount ?? 0,
       },
       distribution: stars,
@@ -267,7 +279,9 @@ export class ReviewService {
         include: {
           images: { select: { id: true, url: true, alt: true } },
           product: { select: { id: true, title: true, slug: true } },
-          user: { select: { id: true, firstName: true, lastName: true, email: true } },
+          user: {
+            select: { id: true, firstName: true, lastName: true, email: true },
+          },
         },
       }),
       this.prisma.review.count({ where }),
@@ -309,7 +323,8 @@ export class ReviewService {
 
     await this.audit.record({
       actorId,
-      action: status === ReviewStatus.APPROVED ? 'review.approve' : 'review.reject',
+      action:
+        status === ReviewStatus.APPROVED ? 'review.approve' : 'review.reject',
       entityType: 'Review',
       entityId: id,
       metadata: {
@@ -373,7 +388,9 @@ export class ReviewService {
    */
   private async resolveReviewImages(
     mediaIds?: string[],
-  ): Promise<{ cloudinaryPublicId: string; url: string; alt: string | null }[]> {
+  ): Promise<
+    { cloudinaryPublicId: string; url: string; alt: string | null }[]
+  > {
     if (!mediaIds || mediaIds.length === 0) return [];
     const unique = [...new Set(mediaIds)];
     if (unique.length > MAX_REVIEW_IMAGES) {
@@ -401,7 +418,9 @@ export class ReviewService {
     return initial ? `${firstName} ${initial}.` : firstName;
   }
 
-  private orderByFor(sort?: ReviewSort): Prisma.ReviewOrderByWithRelationInput[] {
+  private orderByFor(
+    sort?: ReviewSort,
+  ): Prisma.ReviewOrderByWithRelationInput[] {
     switch (sort) {
       case 'helpful':
         return [{ helpfulCount: 'desc' }, { createdAt: 'desc' }];

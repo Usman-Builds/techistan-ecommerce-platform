@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { X } from "lucide-react";
 import type { SearchFacets, SearchQuery } from "@/lib/api/search";
 import { formatCents } from "@/lib/format";
@@ -254,10 +254,16 @@ function CustomPriceRange({
   );
 
   // Keep local inputs in sync when filters change from elsewhere (e.g. buckets).
-  useEffect(() => {
+  // Adjusted during render rather than in an effect, so there's no extra pass.
+  const [synced, setSynced] = useState({
+    min: filters.minPrice,
+    max: filters.maxPrice,
+  });
+  if (synced.min !== filters.minPrice || synced.max !== filters.maxPrice) {
+    setSynced({ min: filters.minPrice, max: filters.maxPrice });
     setMin(filters.minPrice != null ? String(centsToDollars(filters.minPrice)) : "");
     setMax(filters.maxPrice != null ? String(centsToDollars(filters.maxPrice)) : "");
-  }, [filters.minPrice, filters.maxPrice]);
+  }
 
   const apply = () => {
     const minVal = min.trim() === "" ? undefined : dollarsToCents(Number(min));

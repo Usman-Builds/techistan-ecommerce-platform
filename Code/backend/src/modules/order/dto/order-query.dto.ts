@@ -1,13 +1,6 @@
 import { Transform } from 'class-transformer';
 import { OrderStatus, PaymentStatus } from '@prisma/client';
-import {
-  IsEnum,
-  IsInt,
-  IsOptional,
-  IsString,
-  Max,
-  Min,
-} from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 /**
  * Customer order-history filters (script 11, Task 3, FR-112). Scoped server-side

@@ -16,7 +16,7 @@ async function login(app: INestApplication, email: string): Promise<string> {
     .post('/auth/login')
     .send({ email, password: PASSWORD })
     .expect(200);
-  return res.body.accessToken;
+  return (res.body as { accessToken: string }).accessToken;
 }
 
 describe('Review verified-purchase gating (e2e)', () => {
@@ -46,9 +46,15 @@ describe('Review verified-purchase gating (e2e)', () => {
   });
 
   it('accepts a review once a delivered order contains the product', async () => {
-    const user = await makeUser(prisma, { email: 'realbuyer@example.com', password: PASSWORD });
+    const user = await makeUser(prisma, {
+      email: 'realbuyer@example.com',
+      password: PASSWORD,
+    });
     const token = await login(app, 'realbuyer@example.com');
-    const { product, variant } = await makeProduct(prisma, { title: 'Gadget', priceCents: 2500 });
+    const { product, variant } = await makeProduct(prisma, {
+      title: 'Gadget',
+      priceCents: 2500,
+    });
 
     await makeDeliveredOrder(prisma, {
       userId: user.id,
@@ -62,16 +68,26 @@ describe('Review verified-purchase gating (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post('/reviews')
       .set('Authorization', `Bearer ${token}`)
-      .send({ productId: product.id, rating: 4, title: 'Solid', body: 'Works well' })
+      .send({
+        productId: product.id,
+        rating: 4,
+        title: 'Solid',
+        body: 'Works well',
+      })
       .expect(201);
 
     expect(res.body).toMatchObject({ rating: 4, status: 'PENDING' }); // hidden until moderated
-    const count = await prisma.review.count({ where: { productId: product.id } });
+    const count = await prisma.review.count({
+      where: { productId: product.id },
+    });
     expect(count).toBe(1);
   });
 
   it('rejects a second review of the same product by the same user (409)', async () => {
-    const user = await makeUser(prisma, { email: 'dupe@example.com', password: PASSWORD });
+    const user = await makeUser(prisma, {
+      email: 'dupe@example.com',
+      password: PASSWORD,
+    });
     const token = await login(app, 'dupe@example.com');
     const { product, variant } = await makeProduct(prisma, { title: 'Gizmo' });
     await makeDeliveredOrder(prisma, {

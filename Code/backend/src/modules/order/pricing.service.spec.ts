@@ -25,7 +25,11 @@ const usAddress: OrderAddressDto = {
 
 describe('PricingService.quote — shipping', () => {
   it('uses the flat default zone when no zones are configured', async () => {
-    const svc = buildService({ currency: 'USD', taxRules: null, shippingZones: null });
+    const svc = buildService({
+      currency: 'USD',
+      taxRules: null,
+      shippingZones: null,
+    });
     const q = await svc.quote({
       address: usAddress,
       subtotalCents: 2000,
@@ -37,7 +41,11 @@ describe('PricingService.quote — shipping', () => {
   });
 
   it('waives shipping over the zone free-over threshold', async () => {
-    const svc = buildService({ currency: 'USD', taxRules: null, shippingZones: null });
+    const svc = buildService({
+      currency: 'USD',
+      taxRules: null,
+      shippingZones: null,
+    });
     const q = await svc.quote({
       address: usAddress,
       subtotalCents: 5000, // >= default freeOverCents (5000)
@@ -48,7 +56,11 @@ describe('PricingService.quote — shipping', () => {
   });
 
   it('waives shipping when a FREE_SHIPPING coupon is applied', async () => {
-    const svc = buildService({ currency: 'USD', taxRules: null, shippingZones: null });
+    const svc = buildService({
+      currency: 'USD',
+      taxRules: null,
+      shippingZones: null,
+    });
     const q = await svc.quote({
       address: usAddress,
       subtotalCents: 1000,
@@ -86,7 +98,11 @@ describe('PricingService.quote — tax', () => {
   };
 
   it('applies the country rate in basis points', async () => {
-    const svc = buildService({ currency: 'USD', taxRules: rules, shippingZones: null });
+    const svc = buildService({
+      currency: 'USD',
+      taxRules: rules,
+      shippingZones: null,
+    });
     const ny = { ...usAddress, state: 'NY' } as OrderAddressDto;
     const q = await svc.quote({
       address: ny,
@@ -98,7 +114,11 @@ describe('PricingService.quote — tax', () => {
   });
 
   it('lets a per-state rate override the country rate', async () => {
-    const svc = buildService({ currency: 'USD', taxRules: rules, shippingZones: null });
+    const svc = buildService({
+      currency: 'USD',
+      taxRules: rules,
+      shippingZones: null,
+    });
     const q = await svc.quote({
       address: usAddress, // CA
       subtotalCents: 10000,
@@ -109,7 +129,11 @@ describe('PricingService.quote — tax', () => {
   });
 
   it('taxes the discounted base (discount reduces the taxable amount)', async () => {
-    const svc = buildService({ currency: 'USD', taxRules: rules, shippingZones: null });
+    const svc = buildService({
+      currency: 'USD',
+      taxRules: rules,
+      shippingZones: null,
+    });
     const q = await svc.quote({
       address: usAddress, // CA @ 7.25%
       subtotalCents: 10000,
@@ -120,7 +144,11 @@ describe('PricingService.quote — tax', () => {
   });
 
   it('charges no tax for an unlisted country', async () => {
-    const svc = buildService({ currency: 'USD', taxRules: rules, shippingZones: null });
+    const svc = buildService({
+      currency: 'USD',
+      taxRules: rules,
+      shippingZones: null,
+    });
     const de = { ...usAddress, country: 'DE' } as OrderAddressDto;
     const q = await svc.quote({
       address: de,

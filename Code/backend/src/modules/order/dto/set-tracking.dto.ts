@@ -1,4 +1,10 @@
-import { IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 /** Supported carriers (FR-504). Keep in sync with CARRIER_TRACKING_URLS. */
 export enum Carrier {

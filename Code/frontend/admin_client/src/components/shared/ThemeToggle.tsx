@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
 import { Sun, Moon, Monitor } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,7 @@ const ORDER: Mode[] = ["light", "dark", "system"];
 const NEXT: Record<Mode, Mode> = { light: "dark", dark: "system", system: "light" };
 const ICON = { light: Sun, dark: Moon, system: Monitor } as const;
 const LABEL = { light: "Light", dark: "Dark", system: "System" } as const;
+const noopSubscribe = () => () => {};
 
 /**
  * Accessible theme switcher cycling Light → Dark → System.
@@ -17,9 +18,13 @@ const LABEL = { light: "Light", dark: "Dark", system: "System" } as const;
  * (the server can't know the resolved theme).
  */
 export function ThemeToggle({ className }: { className?: string }) {
-  const [mounted, setMounted] = useState(false);
+  // false during SSR and hydration, true after: the hydration-safe "mounted" flag.
+  const mounted = useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
   const { theme, setTheme } = useTheme();
-  useEffect(() => setMounted(true), []);
 
   const current: Mode =
     mounted && ORDER.includes(theme as Mode) ? (theme as Mode) : "system";

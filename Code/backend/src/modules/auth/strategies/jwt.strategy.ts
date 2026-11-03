@@ -8,8 +8,7 @@ import { ACCESS_TOKEN_COOKIE } from '../auth.constants';
 // Read the access token from the httpOnly cookie first, then fall back to the
 // Authorization: Bearer header (tooling / API clients).
 const cookieExtractor = (req: Request): string | null => {
-  const cookies = (req as Request & { cookies?: Record<string, string> })
-    .cookies;
+  const cookies = req.cookies as Record<string, string> | undefined;
   return cookies?.[ACCESS_TOKEN_COOKIE] ?? null;
 };
 

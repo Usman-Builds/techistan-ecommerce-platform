@@ -169,7 +169,9 @@ export class CustomerService {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('Customer not found');
     if (user.role !== Role.CUSTOMER) {
-      throw new BadRequestException('Only customer accounts can be updated here');
+      throw new BadRequestException(
+        'Only customer accounts can be updated here',
+      );
     }
 
     const updated = await this.prisma.user.update({

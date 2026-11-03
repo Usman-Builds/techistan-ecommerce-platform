@@ -47,7 +47,11 @@ export function readSetCookie(
   name: string,
 ): string | undefined {
   const raw = res.headers['set-cookie'];
-  const list = Array.isArray(raw) ? raw : raw ? [String(raw)] : [];
+  const list: string[] = Array.isArray(raw)
+    ? (raw as string[])
+    : typeof raw === 'string'
+      ? [raw]
+      : [];
   const hit = list.find((c) => c.startsWith(`${name}=`));
   if (!hit) return undefined;
   const value = hit.split(';')[0].slice(name.length + 1);

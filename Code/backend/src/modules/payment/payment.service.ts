@@ -203,7 +203,12 @@ export class PaymentService {
     }
   }
 
-  /** Dispatch a verified event. Unknown types are acknowledged and ignored. */
+  /**
+   * Dispatch a verified event. Unknown types are acknowledged and ignored.
+   * Besides the payment outcome, refunds, disputes and cancellations made
+   * outside this app (Stripe Dashboard, the card network) are synced (#43). The
+   * webhook endpoint must be subscribed to these event types in Stripe.
+   */
   async handleEvent(event: Stripe.Event): Promise<void> {
     switch (event.type) {
       case 'payment_intent.succeeded':
@@ -211,6 +216,16 @@ export class PaymentService {
         break;
       case 'payment_intent.payment_failed':
         await this.markFailed(event.data.object, event);
+        break;
+      case 'payment_intent.canceled':
+        await this.markCanceled(event.data.object, event);
+        break;
+      case 'charge.refunded':
+        await this.syncRefund(event.data.object, event);
+        break;
+      case 'charge.dispute.created':
+      case 'charge.dispute.closed':
+        await this.recordDispute(event.data.object, event);
         break;
       default:
         this.logger.debug(`Ignoring unhandled event type: ${event.type}`);
@@ -388,6 +403,168 @@ export class PaymentService {
         return false;
       }
       throw err;
+    }
+  }
+
+  // ─────────────── Changes made outside this app (#43) ───────────────────────
+
+  /**
+   * Run `fn` once per Stripe event: the ProcessedWebhookEvent insert shares
+   * the transaction, so a redelivered event (duplicate id → P2002) is a no-op
+   * that resolves to null.
+   */
+  private async onceForEvent<T>(
+    event: Stripe.Event,
+    fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T | null> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.processedWebhookEvent.create({
+          data: { id: event.id, type: event.type },
+        });
+        return fn(tx);
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        this.logger.debug(`Duplicate webhook event ${event.id} ignored.`);
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  /** The intent id a charge or dispute belongs to (string or expanded object). */
+  private static intentIdOf(
+    ref: string | Stripe.PaymentIntent | null | undefined,
+  ): string | null {
+    if (!ref) return null;
+    return typeof ref === 'string' ? ref : ref.id;
+  }
+
+  /**
+   * An intent cancelled at Stripe (by us, the Dashboard, or expiry) can no
+   * longer be paid: move an unpaid Payment to FAILED. The order is left as is;
+   * cancelling it is the order flow's job.
+   */
+  private async markCanceled(
+    intent: Stripe.PaymentIntent,
+    event: Stripe.Event,
+  ): Promise<void> {
+    await this.onceForEvent(event, async (tx) => {
+      await tx.payment.updateMany({
+        where: {
+          stripePaymentIntentId: intent.id,
+          status: {
+            in: [PaymentStatus.REQUIRES_PAYMENT, PaymentStatus.PROCESSING],
+          },
+        },
+        data: { status: PaymentStatus.FAILED },
+      });
+    });
+  }
+
+  /**
+   * Mirror Stripe's refunded total onto the Payment (`charge.refunded`). Stripe
+   * sends the cumulative `amount_refunded`, so this is idempotent and covers
+   * Dashboard refunds as well as echoes of our own (which change nothing). A
+   * full refund also moves the order to REFUNDED.
+   */
+  private async syncRefund(
+    charge: Stripe.Charge,
+    event: Stripe.Event,
+  ): Promise<void> {
+    const intentId = PaymentService.intentIdOf(charge.payment_intent);
+    if (!intentId) return;
+    const synced = await this.onceForEvent(event, async (tx) => {
+      const payment = await tx.payment.findUnique({
+        where: { stripePaymentIntentId: intentId },
+      });
+      if (!payment) {
+        this.logger.warn(`Refund for unknown intent ${intentId}.`);
+        return null;
+      }
+      const refundedTotal = Math.min(charge.amount_refunded, payment.amount);
+      // Only ever move the total forward (an older event can't undo a refund).
+      if (refundedTotal <= payment.refundedAmount) return null;
+      const full = refundedTotal >= payment.amount;
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          refundedAmount: refundedTotal,
+          status: full
+            ? PaymentStatus.REFUNDED
+            : PaymentStatus.PARTIALLY_REFUNDED,
+        },
+      });
+      if (full) {
+        await tx.order.update({
+          where: { id: payment.orderId },
+          data: { status: OrderStatus.REFUNDED },
+        });
+      }
+      return { orderId: payment.orderId, refundedTotal };
+    });
+    if (synced) {
+      const { orderId, refundedTotal } = synced;
+      await this.audit.record({
+        actorId: null,
+        action: 'order.refund.external',
+        entityType: 'Order',
+        entityId: orderId,
+        metadata: { refundedTotal, stripeChargeId: charge.id },
+      });
+    }
+  }
+
+  /**
+   * Flag a dispute (chargeback) to admins: an internal note on the order,
+   * which the admin order page shows, plus an audit entry. Opening and closing
+   * are both recorded; the money movement itself arrives as its own events.
+   */
+  private async recordDispute(
+    dispute: Stripe.Dispute,
+    event: Stripe.Event,
+  ): Promise<void> {
+    const intentId = PaymentService.intentIdOf(dispute.payment_intent);
+    if (!intentId) return;
+    const orderId = await this.onceForEvent(event, async (tx) => {
+      const payment = await tx.payment.findUnique({
+        where: { stripePaymentIntentId: intentId },
+      });
+      if (!payment) {
+        this.logger.warn(`Dispute for unknown intent ${intentId}.`);
+        return null;
+      }
+      const amount = `${(dispute.amount / 100).toFixed(2)} ${dispute.currency.toUpperCase()}`;
+      const body =
+        event.type === 'charge.dispute.created'
+          ? `Stripe dispute opened (${dispute.reason}) for ${amount}. Respond in the Stripe Dashboard.`
+          : `Stripe dispute closed: ${dispute.status}.`;
+      await tx.orderNote.create({
+        data: { orderId: payment.orderId, authorId: null, body },
+      });
+      return payment.orderId;
+    });
+    if (orderId) {
+      this.logger.warn(`Order ${orderId}: ${event.type} (${dispute.id}).`);
+      await this.audit.record({
+        actorId: null,
+        action:
+          event.type === 'charge.dispute.created'
+            ? 'order.dispute.open'
+            : 'order.dispute.close',
+        entityType: 'Order',
+        entityId: orderId,
+        metadata: {
+          disputeId: dispute.id,
+          reason: dispute.reason,
+          status: dispute.status,
+          amount: dispute.amount,
+        },
+      });
     }
   }
 

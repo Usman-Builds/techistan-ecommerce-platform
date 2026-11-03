@@ -1,6 +1,7 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { BACKEND_URL } from "@/lib/api/client";
+import { backendForwardHeaders } from "@/lib/server/backend-headers";
 import type { User } from "@/lib/api/auth";
 
 /**
@@ -16,9 +17,10 @@ export async function getServerUser(): Promise<User | null> {
   const cookieHeader = cookieStore.toString();
   if (!cookieHeader) return null;
 
+  const forward = await backendForwardHeaders();
   try {
     const res = await fetch(`${BACKEND_URL}/auth/me`, {
-      headers: { cookie: cookieHeader },
+      headers: { ...forward, cookie: cookieHeader },
       cache: "no-store",
     });
     if (!res.ok) return null;

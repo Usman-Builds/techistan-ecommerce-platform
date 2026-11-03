@@ -81,6 +81,11 @@ export const validationSchema: ObjectSchema<Record<string, unknown>> =
     // when unset (see configuration.ts). Provide a distinct value in production.
     CART_COOKIE_SECRET: Joi.string().optional().allow(''),
 
+    // Shared with both Next.js servers. Lets them tell the rate limiter which
+    // visitor a proxied/server-side request is for (see
+    // common/guards/proxy-aware-throttler.guard.ts). Unset = bucket by req.ip.
+    PROXY_SECRET: Joi.string().optional().allow(''),
+
     // Stripe (script 10). Required in production; optional in dev/test so the
     // backend boots before real keys are wired (checkout errors at call time
     // until set). The secret key never leaves the server.

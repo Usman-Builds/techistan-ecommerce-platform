@@ -2,7 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ProxyAwareThrottlerGuard } from './common/guards/proxy-aware-throttler.guard';
 import configuration from './config/configuration';
 import { validationSchema } from './config/validation';
 import { PrismaModule } from './prisma/prisma.module'; // if you already have it
@@ -82,8 +83,10 @@ import { CronModule } from './modules/cron/cron.module';
   controllers: [AppController],
   providers: [
     AppService,
-    // Apply the throttler globally so @Throttle overrides take effect.
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Apply the throttler globally so @Throttle overrides take effect. The
+    // proxy-aware variant buckets by the real visitor when the request comes
+    // through one of our Next.js servers (see the guard for why).
+    { provide: APP_GUARD, useClass: ProxyAwareThrottlerGuard },
   ],
 })
 export class AppModule {}

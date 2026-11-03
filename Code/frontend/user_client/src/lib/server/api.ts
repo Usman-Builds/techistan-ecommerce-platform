@@ -1,4 +1,5 @@
 import { BACKEND_URL } from "@/lib/api/client";
+import { backendForwardHeaders } from "@/lib/server/backend-headers";
 
 /**
  * Server-side GET for SSR/SEO reads in Server Components (script 14). Hits the
@@ -12,8 +13,12 @@ import { BACKEND_URL } from "@/lib/api/client";
  * resource should check for `null` and call `notFound()`.
  */
 export async function serverGet<T>(path: string): Promise<T | null> {
+  const headers = await backendForwardHeaders();
   try {
-    const res = await fetch(`${BACKEND_URL}${path}`, { cache: "no-store" });
+    const res = await fetch(`${BACKEND_URL}${path}`, {
+      headers,
+      cache: "no-store",
+    });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {

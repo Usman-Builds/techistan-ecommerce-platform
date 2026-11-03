@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { getServerUser } from "@/lib/auth/server";
 import { isAdminRole } from "@/lib/api/auth";
 import { AdminShell } from "@/components/admin/AdminShell";
+import { StoreCurrency } from "@/components/admin/StoreCurrency";
+import { getServerStoreCurrency } from "@/lib/server/store-currency";
 
 /**
  * Authoritative gate for the admin shell. `proxy.ts` already bounced cookie-less
@@ -15,10 +17,18 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const user = await getServerUser();
+  const [user, currency] = await Promise.all([
+    getServerUser(),
+    getServerStoreCurrency(),
+  ]);
   if (!user || !isAdminRole(user.role)) {
     redirect("/login");
   }
 
-  return <AdminShell user={user}>{children}</AdminShell>;
+  // Money inputs and totals use the store currency's real minor units (#49).
+  return (
+    <StoreCurrency currency={currency}>
+      <AdminShell user={user}>{children}</AdminShell>
+    </StoreCurrency>
+  );
 }

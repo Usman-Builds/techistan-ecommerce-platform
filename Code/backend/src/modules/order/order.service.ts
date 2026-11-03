@@ -319,6 +319,8 @@ export class OrderService {
    * Customer self-cancel — allowed only while the order is still unpaid
    * (PENDING). A paid order must go through the returns flow; this keeps the
    * cancel path free of a refund side effect and never leaves money uncaptured.
+   * The order's PaymentIntent is cancelled at Stripe first, so the shopper
+   * can't still pay it from another tab (#3).
    */
   async cancelOrder(orderId: string, actor: OrderActor) {
     const order = await this.loadOwnedOrder(orderId, actor);
@@ -327,6 +329,7 @@ export class OrderService {
         'This order can no longer be cancelled. If it has shipped, request a return instead.',
       );
     }
+    await this.payment.cancelOpenIntent(order.id);
     await this.transition(order, OrderStatus.CANCELLED, actor.userId, {
       action: 'order.cancel',
     });
@@ -469,6 +472,13 @@ export class OrderService {
       where: { id: orderId },
     });
     if (!order) throw new NotFoundException('Order not found');
+    // Cancelling an unpaid order: make its PaymentIntent unpayable first (#3).
+    if (
+      status === OrderStatus.CANCELLED &&
+      order.status === OrderStatus.PENDING
+    ) {
+      await this.payment.cancelOpenIntent(order.id);
+    }
 
     await this.transition(order, status, actor.userId, {
       action: 'order.status',

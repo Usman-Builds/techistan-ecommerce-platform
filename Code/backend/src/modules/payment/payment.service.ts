@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -428,10 +429,40 @@ export class PaymentService {
       );
     }
 
-    const refund = await this.client().refunds.create({
-      payment_intent: payment.stripePaymentIntentId,
-      amount, // always specify cents so partial refunds are exact
+    const stripe = this.client();
+
+    // Reserve the amount before calling Stripe (#4). The conditional update only
+    // matches while refundedAmount is still the value we validated against, so
+    // a concurrent refund on the same balance loses here instead of at Stripe.
+    const reserved = await this.prisma.payment.updateMany({
+      where: { id: payment.id, refundedAmount: payment.refundedAmount },
+      data: { refundedAmount: { increment: amount } },
     });
+    if (reserved.count === 0) {
+      throw new ConflictException(
+        'Another refund for this order is in progress. Reload and try again.',
+      );
+    }
+
+    let refund: Stripe.Refund;
+    try {
+      refund = await stripe.refunds.create(
+        {
+          payment_intent: payment.stripePaymentIntentId,
+          amount, // always specify cents so partial refunds are exact
+        },
+        // Same balance + amount → same key, so a retried request can't refund twice.
+        {
+          idempotencyKey: `refund:${payment.id}:${payment.refundedAmount}:${amount}`,
+        },
+      );
+    } catch (err) {
+      await this.prisma.payment.updateMany({
+        where: { id: payment.id },
+        data: { refundedAmount: { decrement: amount } },
+      });
+      throw err;
+    }
 
     const refundedTotal = payment.refundedAmount + amount;
     const fullyRefunded = refundedTotal >= payment.amount;
@@ -440,7 +471,6 @@ export class PaymentService {
       await tx.payment.update({
         where: { id: payment.id },
         data: {
-          refundedAmount: refundedTotal,
           status: fullyRefunded
             ? PaymentStatus.REFUNDED
             : PaymentStatus.PARTIALLY_REFUNDED,

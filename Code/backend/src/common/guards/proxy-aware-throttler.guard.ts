@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
-import { timingSafeEqual } from 'crypto';
+import { safeEqual } from '../utils/safe-equal';
 
 /** Header carrying the shared secret that proves a request came from our own Next.js servers. */
 export const PROXY_SECRET_HEADER = 'x-proxy-secret';
@@ -16,12 +16,6 @@ function headerValue(
   const headers = req.headers as HeaderBag | undefined;
   const v = headers?.[name];
   return Array.isArray(v) ? v[0] : v;
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
 /**

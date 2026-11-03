@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
+import { safeEqual } from '../../common/utils/safe-equal';
 
 /**
  * Authorizes the externally-invokable POST /cron/* routes (script 16, Task 8).
@@ -35,7 +36,7 @@ export class CronSecretGuard implements CanActivate {
     const provided =
       bearer ?? (typeof custom === 'string' ? custom : undefined);
 
-    if (!provided || provided !== configured) {
+    if (!provided || !safeEqual(provided, configured)) {
       throw new UnauthorizedException('Invalid cron secret');
     }
     return true;

@@ -997,8 +997,25 @@ export class ProductService {
 
   private async cleanupImages(publicIds: string[]): Promise<void> {
     const unique = [...new Set(publicIds)];
+    if (unique.length === 0) return;
+    // Destroy only assets nothing else still points at (#28): a duplicated
+    // product shares its source's public_ids, and a library asset (MediaAsset)
+    // or review photo can be the same public_id as a product image. Runs after
+    // the delete has committed, so the deleted product's own rows are gone.
+    const where = { cloudinaryPublicId: { in: unique } };
+    const select = { cloudinaryPublicId: true } as const;
+    const [images, assets, reviewImages] = await Promise.all([
+      this.prisma.productImage.findMany({ where, select }),
+      this.prisma.mediaAsset.findMany({ where, select }),
+      this.prisma.reviewImage.findMany({ where, select }),
+    ]);
+    const inUse = new Set(
+      [...images, ...assets, ...reviewImages].map((r) => r.cloudinaryPublicId),
+    );
     await Promise.all(
-      unique.map((pid) => this.media.cleanupCloudinaryAsset(pid)),
+      unique
+        .filter((pid) => !inUse.has(pid))
+        .map((pid) => this.media.cleanupCloudinaryAsset(pid)),
     );
   }
 }

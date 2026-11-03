@@ -19,6 +19,29 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * export, the scheduled soft-delete with a 30-day grace window + cancellation,
  * and the anonymize-on-expiry sweep the daily cron drives.
  */
+const REDACTED = '[redacted]';
+
+/**
+ * Replace the personal parts of an order's address snapshot. Country and state
+ * stay because tax was charged on them; every other field is blanked while the
+ * object keeps the shape the order views expect.
+ */
+function redactAddress(addr: Prisma.JsonValue): Prisma.InputJsonValue {
+  const src =
+    addr && typeof addr === 'object' && !Array.isArray(addr)
+      ? (addr as Record<string, unknown>)
+      : {};
+  const keep = (k: string) => (typeof src[k] === 'string' ? src[k] : '');
+  return {
+    fullName: 'Deleted User',
+    line1: REDACTED,
+    city: REDACTED,
+    postalCode: REDACTED,
+    state: keep('state'),
+    country: keep('country'),
+  };
+}
+
 @Injectable()
 export class AccountService {
   private readonly logger = new Logger(AccountService.name);
@@ -256,10 +279,33 @@ export class AccountService {
         tx.passwordResetToken.deleteMany({ where: { userId } }),
       ]);
 
+      // Orders are retained for financial/tax records, but the snapshot of the
+      // customer's contact details on them is personal data too (#25). Keep
+      // money, items and the tax jurisdiction (country/state); drop the rest.
+      const anonymizedEmail = `deleted+${userId}@deleted.invalid`;
+      const orders = await tx.order.findMany({
+        where: { userId },
+        select: { id: true, shippingAddress: true, billingAddress: true },
+      });
+      for (const order of orders) {
+        await tx.order.update({
+          where: { id: order.id },
+          data: {
+            email: anonymizedEmail,
+            shippingAddress: redactAddress(order.shippingAddress),
+            billingAddress: redactAddress(order.billingAddress),
+          },
+        });
+      }
+      await tx.returnRequest.updateMany({
+        where: { order: { userId } },
+        data: { note: null },
+      });
+
       await tx.user.update({
         where: { id: userId },
         data: {
-          email: `deleted+${userId}@deleted.invalid`,
+          email: anonymizedEmail,
           firstName: 'Deleted',
           lastName: 'User',
           phoneNumber: null,

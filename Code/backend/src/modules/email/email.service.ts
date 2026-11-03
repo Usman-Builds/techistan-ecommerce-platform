@@ -39,6 +39,16 @@ export interface EmailJob {
  * When RESEND_API_KEY is unset (dev/test) every send is logged instead of
  * dispatched, so the whole app is exercisable without a provider.
  */
+/**
+ * The order a "View order" link opens (#35). The storefront looks orders up by
+ * id; account orders open in the account area, guest orders on the guest
+ * confirmation page (a guest has no account to sign in to).
+ */
+export interface OrderLink {
+  orderId: string;
+  userId: number | null;
+}
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -143,6 +153,7 @@ export class EmailService {
   async sendOrderConfirmation(
     to: string,
     props: Omit<OrderConfirmationProps, 'branding' | 'orderUrl'>,
+    link: OrderLink,
   ): Promise<void> {
     const branding = await this.loadBranding();
     void this.enqueueEmail({
@@ -151,7 +162,7 @@ export class EmailService {
       react: React.createElement(OrderConfirmation, {
         ...props,
         branding,
-        orderUrl: this.orderUrl(props.orderNumber),
+        orderUrl: this.orderUrl(link),
       }),
     });
   }
@@ -164,6 +175,7 @@ export class EmailService {
       trackingNumber: string;
       trackingUrl: string | null;
     },
+    link: OrderLink,
   ): Promise<void> {
     const branding = await this.loadBranding();
     void this.enqueueEmail({
@@ -172,7 +184,7 @@ export class EmailService {
       react: React.createElement(ShippingUpdate, {
         branding,
         ...data,
-        orderUrl: this.orderUrl(data.orderNumber),
+        orderUrl: this.orderUrl(link),
       }),
     });
   }
@@ -185,6 +197,7 @@ export class EmailService {
       message: string;
       subject: string;
     },
+    link: OrderLink,
   ): Promise<void> {
     const branding = await this.loadBranding();
     void this.enqueueEmail({
@@ -195,7 +208,7 @@ export class EmailService {
         orderNumber: data.orderNumber,
         headline: data.headline,
         message: data.message,
-        orderUrl: this.orderUrl(data.orderNumber),
+        orderUrl: this.orderUrl(link),
       }),
     });
   }
@@ -203,6 +216,7 @@ export class EmailService {
   async sendRefund(
     to: string,
     data: { orderNumber: string; amountCents: number; currency: string },
+    link: OrderLink,
   ): Promise<void> {
     const branding = await this.loadBranding();
     void this.enqueueEmail({
@@ -211,7 +225,7 @@ export class EmailService {
       react: React.createElement(Refund, {
         branding,
         ...data,
-        orderUrl: this.orderUrl(data.orderNumber),
+        orderUrl: this.orderUrl(link),
       }),
     });
   }
@@ -270,8 +284,11 @@ export class EmailService {
     ).replace(/\/$/, '');
   }
 
-  private orderUrl(orderNumber: string): string {
-    return `${this.userUrl()}/account/orders/${orderNumber}`;
+  private orderUrl(link: OrderLink): string {
+    const id = encodeURIComponent(link.orderId);
+    return link.userId != null
+      ? `${this.userUrl()}/account/orders/${id}`
+      : `${this.userUrl()}/checkout/confirmation?orderId=${id}`;
   }
 
   // ──────────────────────────── Branding loader ──────────────────────────────

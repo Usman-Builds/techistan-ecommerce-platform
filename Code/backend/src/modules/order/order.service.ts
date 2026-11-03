@@ -34,6 +34,9 @@ import {
   RETURN_ELIGIBLE,
 } from './order-status';
 
+/** Crockford base-32 alphabet for order-number suffixes (#52). */
+const ORDER_NUMBER_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
 /** Loads an order with the fields the client + confirmation view need. */
 const ORDER_INCLUDE = Prisma.validator<Prisma.OrderInclude>()({
   items: true,
@@ -1017,18 +1020,33 @@ export class OrderService {
         throw err;
       }
     }
-    throw new Error(
+    // Five collisions in a row is practically impossible with a 32^6 suffix,
+    // but if it happens it is transient: answer 503 so the client retries
+    // (same idempotency key) instead of showing a generic 500.
+    this.logger.error(
       'Could not generate a unique order number after 5 attempts.',
+    );
+    throw new ServiceUnavailableException(
+      'We could not start your order. Please try again.',
     );
   }
 
-  /** ORD-YYYYMMDD-NNNN (NNNN is random; uniqueness enforced by the DB). */
+  /**
+   * ORD-YYYYMMDD-XXXXXX, where XXXXXX is 6 random Crockford base-32 characters
+   * (no I, L, O or U, so it reads back unambiguously). That is about a billion
+   * numbers per UTC day; the old 4-digit suffix allowed only 10,000 and checkout
+   * started failing well before that (#52). Uniqueness is enforced by the DB.
+   */
   private static generateOrderNumber(): string {
     const now = new Date();
     const y = now.getUTCFullYear();
     const m = String(now.getUTCMonth() + 1).padStart(2, '0');
     const d = String(now.getUTCDate()).padStart(2, '0');
-    const suffix = String(randomInt(0, 10000)).padStart(4, '0');
+    let suffix = '';
+    for (let i = 0; i < 6; i++) {
+      suffix +=
+        ORDER_NUMBER_ALPHABET[randomInt(0, ORDER_NUMBER_ALPHABET.length)];
+    }
     return `ORD-${y}${m}${d}-${suffix}`;
   }
 

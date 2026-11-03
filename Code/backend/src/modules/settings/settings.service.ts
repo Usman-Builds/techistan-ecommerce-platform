@@ -114,7 +114,8 @@ export class SettingsService {
       data.shippingZones =
         dto.shippingZones === null
           ? Prisma.JsonNull
-          : (dto.shippingZones as Prisma.InputJsonValue);
+          : // Validated ShippingZoneDto instances: plain data, stored as JSON.
+            (dto.shippingZones as unknown as Prisma.InputJsonValue);
     if (dto.socials !== undefined)
       data.socials =
         dto.socials === null

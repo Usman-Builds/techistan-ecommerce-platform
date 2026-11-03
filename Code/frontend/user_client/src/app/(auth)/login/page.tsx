@@ -9,6 +9,7 @@ import { loginSchema, type LoginInput } from "@/lib/validation/auth";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { ApiError } from "@/lib/api/client";
 import * as authApi from "@/lib/api/auth";
+import { safeNextPath } from "@/lib/utils/safe-redirect";
 
 export default function LoginPage() {
   return (
@@ -39,7 +40,7 @@ function LoginForm() {
     setNeedsVerify(false);
     try {
       await login(data.email, data.password);
-      router.push(search.get("next") || "/account");
+      router.push(safeNextPath(search.get("next")));
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         setNeedsVerify(true);

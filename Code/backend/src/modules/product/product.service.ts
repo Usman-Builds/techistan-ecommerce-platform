@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, ProductStatus } from '@prisma/client';
+import { OrderStatus, Prisma, ProductStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MediaService } from '../media/media.service';
 import { AuditService } from '../audit/audit.service';
@@ -26,6 +26,25 @@ import { SetImagesDto } from './dto/set-images.dto';
 import { UpdateSeoDto } from './dto/update-seo.dto';
 import { VariantInputDto } from './dto/variant.dto';
 import { MAX_AXES, MAX_VARIANTS } from './dto/product.constants';
+
+/** Orders whose items still need their variant (stock on payment, restock on return). */
+const OPEN_ORDER_STATUSES: OrderStatus[] = [
+  OrderStatus.PENDING,
+  OrderStatus.CONFIRMED,
+  OrderStatus.PROCESSING,
+  OrderStatus.SHIPPED,
+];
+
+/** Uppercase SKU, non-alphanumerics collapsed to `-`, max 48 chars. */
+function normalizeSku(base: string): string {
+  return (
+    base
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || 'SKU'
+  );
+}
 
 /** Full product shape for the detail endpoints + editor. */
 const DETAIL_INCLUDE = Prisma.validator<Prisma.ProductInclude>()({
@@ -373,19 +392,28 @@ export class ProductService {
         : { disconnect: true };
     }
 
-    // Variant rows need SKUs generated before the transaction.
-    const variantData = dto.variants
-      ? await this.buildVariantCreateData(slug, dto.variants)
+    // Diff the variants (#27) rather than replacing them: replacing changed
+    // every variant id, which emptied carts, unlinked open orders (so paying
+    // them never decremented stock), wiped scheduled sales and drifted SKUs.
+    const variantPlan = dto.variants
+      ? await this.planVariantChanges(id, slug, dto.variants)
       : null;
 
     const product = await this.prisma.$transaction(async (tx) => {
       await tx.product.update({ where: { id }, data });
 
-      if (variantData) {
-        await tx.productVariant.deleteMany({ where: { productId: id } });
-        if (variantData.length) {
+      if (variantPlan) {
+        if (variantPlan.deleteIds.length) {
+          await tx.productVariant.deleteMany({
+            where: { id: { in: variantPlan.deleteIds }, productId: id },
+          });
+        }
+        for (const u of variantPlan.updates) {
+          await tx.productVariant.update({ where: { id: u.id }, data: u.data });
+        }
+        if (variantPlan.creates.length) {
           await tx.productVariant.createMany({
-            data: variantData.map((v) => ({ ...v, productId: id })),
+            data: variantPlan.creates.map((v) => ({ ...v, productId: id })),
           });
         }
       }
@@ -967,20 +995,129 @@ export class ProductService {
     return rows;
   }
 
+  /**
+   * Work out how a product's variants change on save (#27). Each input is
+   * matched to an existing variant by `id`, else by its option combination
+   * (which validateVariantMatrix keeps unique), and updated in place, keeping
+   * its id, SKU (unless a different one is sent) and sale schedule. Unmatched
+   * inputs are created; unmatched existing variants are deleted, unless an open
+   * order still needs them (that would unlink the order item, so paying the
+   * order would never take the stock).
+   */
+  private async planVariantChanges(
+    productId: string,
+    slug: string,
+    inputs: VariantInputDto[],
+  ) {
+    const existing = await this.prisma.productVariant.findMany({
+      where: { productId },
+      select: { id: true, sku: true, options: true },
+    });
+    const byId = new Map(existing.map((v) => [v.id, v]));
+    const optionKey = (o: unknown) =>
+      JSON.stringify(
+        Object.entries((o ?? {}) as Record<string, string>).sort(([a], [b]) =>
+          a.localeCompare(b),
+        ),
+      );
+    const byOptions = new Map(existing.map((v) => [optionKey(v.options), v]));
+
+    const matched = new Map<VariantInputDto, (typeof existing)[number]>();
+    const used = new Set<string>();
+    for (const input of inputs) {
+      const hit = input.id
+        ? byId.get(input.id)
+        : byOptions.get(optionKey(input.options));
+      if (input.id && !hit) {
+        throw new BadRequestException(
+          `Variant ${input.id} does not belong to this product.`,
+        );
+      }
+      if (hit && !used.has(hit.id)) {
+        matched.set(input, hit);
+        used.add(hit.id);
+      }
+    }
+    const deleteIds = existing.filter((v) => !used.has(v.id)).map((v) => v.id);
+
+    if (deleteIds.length) {
+      const needed = await this.prisma.orderItem.findFirst({
+        where: {
+          variantId: { in: deleteIds },
+          order: { status: { in: OPEN_ORDER_STATUSES } },
+        },
+        select: { sku: true },
+      });
+      if (needed) {
+        throw new BadRequestException(
+          `Variant ${needed.sku} is part of an open order and can't be removed yet.`,
+        );
+      }
+    }
+
+    // SKUs: kept variants hold theirs; those being deleted free theirs up.
+    const taken = new Set<string>(
+      existing.filter((v) => used.has(v.id)).map((v) => v.sku),
+    );
+    const freed = new Set(deleteIds);
+    const updates: { id: string; data: Prisma.ProductVariantUpdateInput }[] =
+      [];
+    const creates: Prisma.ProductVariantCreateManyInput[] = [];
+    for (const input of inputs) {
+      const hit = matched.get(input);
+      const fields = {
+        price: input.price,
+        compareAtPrice: input.compareAtPrice,
+        weightGrams: input.weightGrams,
+        barcode: input.barcode,
+        options: (input.options ?? {}) as Prisma.InputJsonValue,
+      };
+      if (hit) {
+        // The editor always sends compare-at (blank = none), so a missing one
+        // clears it, as the old replace did. Weight and barcode aren't in the
+        // editor, so they are only changed when sent.
+        const data: Prisma.ProductVariantUpdateInput = {
+          ...fields,
+          compareAtPrice: input.compareAtPrice ?? null,
+        };
+        if (input.stock !== undefined) data.stock = input.stock;
+        if (input.sku && normalizeSku(input.sku) !== hit.sku) {
+          taken.delete(hit.sku);
+          data.sku = await this.buildSku(input.sku, taken, freed, hit.id);
+        }
+        updates.push({ id: hit.id, data });
+      } else {
+        const optionSuffix = Object.values(input.options ?? {}).join('-');
+        creates.push({
+          ...fields,
+          productId,
+          stock: input.stock ?? 0,
+          sku: await this.buildSku(
+            input.sku ?? `${slug}-${optionSuffix}`,
+            taken,
+            freed,
+          ),
+        });
+      }
+    }
+    return { updates, creates, deleteIds };
+  }
+
   /** Normalize to an uppercase SKU and suffix `-2`, `-3`… until globally unique. */
-  private async buildSku(base: string, taken: Set<string>): Promise<string> {
-    const root =
-      base
-        .toUpperCase()
-        .replace(/[^A-Z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 48) || 'SKU';
+  private async buildSku(
+    base: string,
+    taken: Set<string>,
+    /** Variants whose SKUs don't count as taken (being deleted, or the variant itself). */
+    freedIds: Set<string> = new Set(),
+    selfId?: string,
+  ): Promise<string> {
+    const root = normalizeSku(base);
     let candidate = root;
     let n = 2;
     while (
       candidate.length === 0 ||
       taken.has(candidate) ||
-      (await this.skuExists(candidate))
+      (await this.skuExists(candidate, freedIds, selfId))
     ) {
       candidate = `${root}-${n}`;
       n += 1;
@@ -989,10 +1126,14 @@ export class ProductService {
     return candidate;
   }
 
-  private skuExists(sku: string): Promise<boolean> {
+  private skuExists(
+    sku: string,
+    freedIds: Set<string> = new Set(),
+    selfId?: string,
+  ): Promise<boolean> {
     return this.prisma.productVariant
       .findUnique({ where: { sku }, select: { id: true } })
-      .then((v) => !!v);
+      .then((v) => !!v && v.id !== selfId && !freedIds.has(v.id));
   }
 
   private async cleanupImages(publicIds: string[]): Promise<void> {

@@ -1,5 +1,9 @@
 # =============================================================================
-# Render blueprint for the Techistan backend.
+# Render blueprint for Techistan: the API plus both Next.js clients.
+#
+# Written to MATCH the live services (names, region, commands), which were
+# created by hand. Syncing it into the same workspace would collide with
+# those names, so use it to rebuild from scratch. See DEPLOY-RENDER.md.
 #
 # This file must sit at the ROOT OF THE GIT REPO, which for this project is
 # ecommerce/ -- one level ABOVE Code/. That is why the two docker paths below
@@ -11,20 +15,21 @@
 # never touch the repo. Everything marked "generateValue: true" is generated
 # once by Render and stored there; you never see or need it.
 #
-# See Code/backend/DEPLOY-RENDER.md for the full runbook.
+# See Code/backend/DEPLOY-RENDER.md for the full runbook, including the
+# "Frontends on Render" section.
 # =============================================================================
 
 services:
   - type: web
-    name: techistan-api
+    name: techistan-ecommerce-platform
     runtime: docker
 
-    # Ohio is deliberate: it is the same physical region as the Neon database
-    # (us-east-2). Cross-region would put a ~230ms round trip on every single
-    # query, which is what the connection test measured from a laptop. Same
-    # region turns that into single-digit milliseconds. If you ever move the
-    # Neon project, move this too -- they must stay together.
-    region: ohio
+    # Oregon, because that is where the live services were created. The Neon
+    # database is in us-east-2 (Ohio), so every query crosses the country (~230ms
+    # measured from a laptop; same-region is single-digit ms). Moving all three
+    # services to `ohio` is the biggest latency win available, but Render cannot
+    # move a service: it means recreating them. Keep the three in one region.
+    region: oregon
 
     # Free spins down after 15 minutes of no traffic and takes ~1 minute to come
     # back, and it has no shell and no pre-deploy command. Fine for showing the
@@ -87,6 +92,12 @@ services:
         generateValue: true
       - key: CRON_SECRET
         generateValue: true
+      # Shared with both Next.js services below (they copy it with fromService).
+      # Authenticates the x-client-ip header they forward, so the rate limiter
+      # buckets per visitor instead of per frontend server. Without it every
+      # visitor shares one bucket and the storefront 429s.
+      - key: PROXY_SECRET
+        generateValue: true
 
       # --- you fill these in the dashboard ------------------------------------
       # Neon. Use the POOLED host here (the one with -pooler): the app opens
@@ -134,4 +145,67 @@ services:
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM
+        sync: false
+
+  # ---------------------------------------------------------------------------
+  # Next.js clients. Web services, NOT static sites: the /api/* rewrite,
+  # proxy.ts and server components all need a running server.
+  #
+  # Commands run from the repo root (no rootDir), hence the `cd`. `-p $PORT`
+  # overrides the hard-coded dev ports in package.json's start scripts.
+  #
+  # NEXT_PUBLIC_* values are baked in at BUILD time; change one, redeploy.
+  # No buildFilter: every push to main redeploys all three services, on
+  # purpose. Add `buildFilter.paths` per service to rebuild only on own changes.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: techistan
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: cd Code/frontend/user_client && npm ci && npm run build
+    startCommand: cd Code/frontend/user_client && npx next start -p $PORT
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "22" # Next 16 needs >= 20.9
+      - key: PROXY_SECRET
+        fromService:
+          type: web
+          name: techistan-ecommerce-platform
+          envVarKey: PROXY_SECRET
+      # The API's public URL, e.g. https://techistan-ecommerce-platform.onrender.com
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+      # This storefront's own public URL (canonical URLs, sitemap, JSON-LD).
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+      - key: NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+        sync: false
+      # The pk_ matching the API's STRIPE_SECRET_KEY (same account, same mode).
+      - key: NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+        sync: false
+
+  - type: web
+    name: techistan-admin
+    runtime: node
+    region: oregon
+    plan: free
+    buildCommand: cd Code/frontend/admin_client && npm ci && npm run build
+    startCommand: cd Code/frontend/admin_client && npx next start -p $PORT
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: PROXY_SECRET
+        fromService:
+          type: web
+          name: techistan-ecommerce-platform
+          envVarKey: PROXY_SECRET
+      - key: NEXT_PUBLIC_API_URL
+        sync: false
+      # The storefront's public URL, for "view on storefront" links.
+      - key: NEXT_PUBLIC_STOREFRONT_URL
+        sync: false
+      - key: NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
         sync: false

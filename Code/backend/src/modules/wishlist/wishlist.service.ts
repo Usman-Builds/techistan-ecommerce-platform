@@ -3,9 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ProductStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProductService } from '../product/product.service';
 import { CartService } from '../cart/cart.service';
+
+/** Most items one customer can keep on their wishlist (#36). */
+export const WISHLIST_MAX = 200;
 
 /**
  * Wishlist domain (script 09, FR-307). Customer-only (the controller guards
@@ -27,17 +31,37 @@ export class WishlistService {
       where: { userId },
       orderBy: { createdAt: 'desc' },
       select: { productId: true },
+      take: WISHLIST_MAX,
     });
     return this.products.getCardsByIds(rows.map((r) => r.productId));
   }
 
-  /** Add a product (idempotent). Returns the updated list. */
+  /**
+   * Add a product (idempotent). Returns the updated list. Only ACTIVE products
+   * can be added: a DRAFT/ARCHIVED one would be stored but never listed (#36),
+   * so it is reported as not found, like on the storefront.
+   */
   async add(userId: number, productId: string) {
     const product = await this.prisma.product.findUnique({
       where: { id: productId },
-      select: { id: true },
+      select: { id: true, status: true },
     });
-    if (!product) throw new NotFoundException('Product not found');
+    if (!product || product.status !== ProductStatus.ACTIVE) {
+      throw new NotFoundException('Product not found');
+    }
+
+    const already = await this.prisma.wishlistItem.findUnique({
+      where: { userId_productId: { userId, productId } },
+      select: { productId: true },
+    });
+    if (!already) {
+      const count = await this.prisma.wishlistItem.count({ where: { userId } });
+      if (count >= WISHLIST_MAX) {
+        throw new BadRequestException(
+          `Your wishlist is full (${WISHLIST_MAX} items). Remove something first.`,
+        );
+      }
+    }
 
     await this.prisma.wishlistItem.upsert({
       where: { userId_productId: { userId, productId } },
@@ -66,6 +90,14 @@ export class WishlistService {
       select: { productId: true },
     });
     if (!item) throw new NotFoundException('Item is not in the wishlist');
+
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { status: true },
+    });
+    if (product?.status !== ProductStatus.ACTIVE) {
+      throw new BadRequestException('This product is no longer available.');
+    }
 
     const variant =
       (await this.prisma.productVariant.findFirst({

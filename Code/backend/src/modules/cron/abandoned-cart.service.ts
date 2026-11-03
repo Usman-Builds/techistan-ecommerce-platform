@@ -87,19 +87,32 @@ export class AbandonedCartService {
     return { firstSent, finalSent };
   }
 
-  /** Send the recovery email for one cart and advance its stage marker. */
+  /**
+   * Claim the stage for one cart, then send its recovery email.
+   *
+   * The claim is a conditional update (#38): it only matches while the cart is
+   * still below this stage AND untouched since we selected it. Overlapping runs
+   * (the hourly @Cron plus POST /cron/abandoned-carts, or two instances) race
+   * on it and exactly one wins, so each stage is emailed at most once. A cart
+   * the shopper edited in the meantime (updatedAt moved) is skipped too.
+   */
   private async sendFor(cart: CartRow, stage: 1 | 2): Promise<boolean> {
     const email = cart.user?.email ?? cart.guestEmail;
     if (!email) return false;
+    // Advance the stage WITHOUT bumping updatedAt (preserve the abandonment clock
+    // so the 24h stage is measured from real inactivity, not from this send).
+    const claim = await this.prisma.cart.updateMany({
+      where: {
+        id: cart.id,
+        recoveryStage: { lt: stage },
+        updatedAt: cart.updatedAt,
+      },
+      data: { recoveryStage: stage, updatedAt: cart.updatedAt },
+    });
+    if (claim.count !== 1) return false;
     await this.email.sendAbandonedCart(email, {
       firstName: cart.user?.firstName ?? null,
       itemCount: cart._count.items,
-    });
-    // Advance the stage WITHOUT bumping updatedAt (preserve the abandonment clock
-    // so the 24h stage is measured from real inactivity, not from this send).
-    await this.prisma.cart.update({
-      where: { id: cart.id },
-      data: { recoveryStage: stage, updatedAt: cart.updatedAt },
     });
     return true;
   }

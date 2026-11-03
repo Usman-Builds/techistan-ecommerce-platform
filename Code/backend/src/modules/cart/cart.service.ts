@@ -4,7 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, ProductStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   CouponService,
@@ -31,6 +31,8 @@ const CART_INCLUDE = Prisma.validator<Prisma.CartInclude>()({
               id: true,
               title: true,
               slug: true,
+              // Only ACTIVE products are purchasable (#15).
+              status: true,
               // Read for promotion scoping (a category-scoped coupon has to
               // know which category each line belongs to), not for display.
               categoryId: true,
@@ -53,7 +55,7 @@ type CartWithItems = Prisma.CartGetPayload<{ include: typeof CART_INCLUDE }>;
 export interface LineAvailability {
   available: number; // current variant stock
   clamped: boolean; // quantity was reduced to fit stock
-  outOfStock: boolean; // stock is 0 — line is not purchasable
+  outOfStock: boolean; // stock is 0, or the product is no longer ACTIVE — not purchasable
 }
 
 export interface CartLineView {
@@ -225,9 +227,19 @@ export class CartService {
   async addItem(cartId: string, variantId: string, quantity: number) {
     const variant = await this.prisma.productVariant.findUnique({
       where: { id: variantId },
-      select: { id: true, price: true, stock: true, productId: true },
+      select: {
+        id: true,
+        price: true,
+        stock: true,
+        productId: true,
+        product: { select: { status: true } },
+      },
     });
     if (!variant) throw new NotFoundException('Variant not found');
+    // A DRAFT/ARCHIVED product must not be addable by variant id (#15).
+    if (variant.product.status !== ProductStatus.ACTIVE) {
+      throw new BadRequestException('This product is not available.');
+    }
     if (variant.stock <= 0) {
       throw new BadRequestException('This item is out of stock.');
     }
@@ -531,7 +543,10 @@ export class CartService {
     let itemCount = 0;
 
     for (const item of cart.items) {
-      const stock = item.variant.stock;
+      // A line whose product was unpublished after it was added is treated
+      // exactly like an out-of-stock one: shown, but not purchasable (#15).
+      const active = item.variant.product.status === ProductStatus.ACTIVE;
+      const stock = active ? item.variant.stock : 0;
       const outOfStock = stock <= 0;
       const clampedQty = Math.max(0, Math.min(item.quantity, stock));
       // Effective (purchasable) quantity used for totals.

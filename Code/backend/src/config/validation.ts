@@ -1,7 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-
 import Joi, { ObjectSchema } from 'joi';
 
 export const validationSchema: ObjectSchema<Record<string, unknown>> =
@@ -110,7 +106,10 @@ export const validationSchema: ObjectSchema<Record<string, unknown>> =
     }),
     EMAIL_FROM: Joi.string().default('Techistan <noreply@techistan.dev>'),
     // Gate the optional admin alert emails; the in-app bell is unconditional.
-    ADMIN_EMAIL_ALERTS: Joi.boolean().truthy('true').falsy('false').default(false),
+    ADMIN_EMAIL_ALERTS: Joi.boolean()
+      .truthy('true')
+      .falsy('false')
+      .default(false),
 
     // Scheduled-job trigger secret (script 16). Required in production so the
     // guarded POST /cron/* routes cannot be invoked anonymously; optional in dev.

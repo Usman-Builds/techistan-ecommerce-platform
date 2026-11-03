@@ -15,7 +15,6 @@ export const VERIFICATION_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h (FR-101)
 export const PASSWORD_RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1h  (FR-103)
 
 // Strong-password policy (FR-105): min 8, ≥1 upper, ≥1 number, ≥1 symbol.
-export const PASSWORD_REGEX =
-  /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
+export const PASSWORD_REGEX = /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
 export const PASSWORD_MESSAGE =
   'Password must be at least 8 characters and include an uppercase letter, a number, and a symbol';

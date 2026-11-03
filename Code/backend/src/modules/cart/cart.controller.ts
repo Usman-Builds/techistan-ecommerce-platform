@@ -38,10 +38,7 @@ export class CartController {
   ) {}
 
   @Get()
-  async get(
-    @CurrentUser() user: AuthUser | undefined,
-    @Req() req: Request,
-  ) {
+  async get(@CurrentUser() user: AuthUser | undefined, @Req() req: Request) {
     const cartId = await this.resolveForRead(user, req);
     return cartId ? this.cart.buildView(cartId) : CartService.emptyView();
   }
@@ -79,10 +76,7 @@ export class CartController {
   }
 
   @Delete()
-  async clear(
-    @CurrentUser() user: AuthUser | undefined,
-    @Req() req: Request,
-  ) {
+  async clear(@CurrentUser() user: AuthUser | undefined, @Req() req: Request) {
     const cartId = await this.resolveForRead(user, req);
     return cartId ? this.cart.clear(cartId) : CartService.emptyView();
   }
@@ -116,7 +110,12 @@ export class CartController {
   ) {
     const cartId = await this.resolveForRead(user, req);
     if (!cartId) {
-      return { amountCents: 0, label: 'Add items to estimate', currency: 'USD', subtotal: 0 };
+      return {
+        amountCents: 0,
+        label: 'Add items to estimate',
+        currency: 'USD',
+        subtotal: 0,
+      };
     }
     return this.cart.estimateShipping(cartId, dto);
   }
@@ -172,8 +171,9 @@ export class CartController {
   // ── Signed guest cookie helpers ──────────────────────────────────────────────
 
   private readSession(req: Request): string | undefined {
-    const signed = (req as Request & { signedCookies?: Record<string, unknown> })
-      .signedCookies;
+    const signed = (
+      req as Request & { signedCookies?: Record<string, unknown> }
+    ).signedCookies;
     const value = signed?.[CART_SESSION_COOKIE];
     return typeof value === 'string' && value.length ? value : undefined;
   }

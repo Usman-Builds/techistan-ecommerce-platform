@@ -104,7 +104,9 @@ describe('CartService.mergeGuestCartIntoUser', () => {
 
     await service(prisma).mergeGuestCartIntoUser('sess', 42);
 
-    const byVariant = Object.fromEntries(upserts.map((u) => [u.variantId, u.quantity]));
+    const byVariant = Object.fromEntries(
+      upserts.map((u) => [u.variantId, u.quantity]),
+    );
     expect(byVariant.v1).toBe(5); // 3 existing + 2 guest, under stock 10
     expect(byVariant.v2).toBe(8); // 0 existing + 8 guest
     expect(byVariant.v3).toBeUndefined(); // out of stock, never upserted

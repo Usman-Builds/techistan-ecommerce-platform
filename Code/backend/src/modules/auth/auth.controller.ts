@@ -23,10 +23,7 @@ import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
-import {
-  ACCESS_TOKEN_COOKIE,
-  REFRESH_TOKEN_COOKIE,
-} from './auth.constants';
+import { ACCESS_TOKEN_COOKIE, REFRESH_TOKEN_COOKIE } from './auth.constants';
 
 // NFR-205 / FR-106: 5 attempts, then a 15-minute lockout (429).
 const STRICT_THROTTLE = { default: { limit: 5, ttl: 15 * 60 * 1000 } };
@@ -120,7 +117,10 @@ export class AuthController {
     @Body() dto: ResetPasswordDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.authService.resetPassword(dto.token, dto.password);
+    const result = await this.authService.resetPassword(
+      dto.token,
+      dto.password,
+    );
     // Sessions were invalidated server-side; clear this browser's cookies too.
     this.clearAuthCookies(res);
     return result;
@@ -148,10 +148,7 @@ export class AuthController {
   // 🚪 Logout — clear DB refresh token + both cookies
   @Post('logout')
   @HttpCode(200)
-  async logout(
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ) {
+  async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const userId = this.authService.resolveUserIdFromRefresh(
       this.readCookie(req, REFRESH_TOKEN_COOKIE),
     );
@@ -193,7 +190,8 @@ export class AuthController {
 
   private setAuthCookies(res: Response, tokens: IssuedTokens) {
     const accessTtl = Number(this.config.get('jwt.expiresIn')) || 86400;
-    const refreshTtl = Number(this.config.get('jwt.refreshExpiresIn')) || 2592000;
+    const refreshTtl =
+      Number(this.config.get('jwt.refreshExpiresIn')) || 2592000;
     res.cookie(ACCESS_TOKEN_COOKIE, tokens.accessToken, {
       ...this.baseCookieOptions(),
       maxAge: accessTtl * 1000,
@@ -220,8 +218,7 @@ export class AuthController {
   }
 
   private readCookie(req: Request, name: string): string | undefined {
-    const cookies = (req as Request & { cookies?: Record<string, string> })
-      .cookies;
+    const cookies = req.cookies as Record<string, string> | undefined;
     return cookies?.[name];
   }
 }

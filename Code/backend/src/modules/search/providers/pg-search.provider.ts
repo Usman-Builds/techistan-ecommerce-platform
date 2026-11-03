@@ -189,10 +189,10 @@ export class PgSearchProvider implements SearchProvider {
   // For Postgres the tsvector is trigger-maintained and rows live in the same DB,
   // so these are no-ops — they exist only to honor the SearchProvider contract for
   // a future external engine (Meilisearch/Typesense) that keeps a separate index.
-  async indexProduct(_productId: string): Promise<void> {
+  async indexProduct(): Promise<void> {
     /* no-op for the PG provider */
   }
-  async removeProduct(_productId: string): Promise<void> {
+  async removeProduct(): Promise<void> {
     /* no-op for the PG provider */
   }
 
@@ -211,7 +211,9 @@ export class PgSearchProvider implements SearchProvider {
         Prisma.sql`(p."search_vector" @@ to_tsquery('english', ${tsq}) OR word_similarity(${q ?? ''}, p."title") > ${WORD_SIM_THRESHOLD})`,
       );
     } else if (q) {
-      c.push(Prisma.sql`word_similarity(${q}, p."title") > ${WORD_SIM_THRESHOLD}`);
+      c.push(
+        Prisma.sql`word_similarity(${q}, p."title") > ${WORD_SIM_THRESHOLD}`,
+      );
     }
 
     if (omit !== 'category' && params.category?.length) {
@@ -258,7 +260,10 @@ export class PgSearchProvider implements SearchProvider {
     return Prisma.join(this.conditions(params, tsq, omit), ' AND ');
   }
 
-  private orderByClause(params: SearchParamsDto, tsq: string | null): Prisma.Sql {
+  private orderByClause(
+    params: SearchParamsDto,
+    tsq: string | null,
+  ): Prisma.Sql {
     switch (params.sort) {
       case ProductSort.PRICE_ASC:
         return Prisma.sql`price_min ASC NULLS LAST`;

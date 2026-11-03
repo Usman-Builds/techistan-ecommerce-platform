@@ -99,10 +99,7 @@ export class OrderController {
       OrderController.actor(user),
     );
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${filename}"`,
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
   }
 
@@ -113,7 +110,8 @@ export class OrderController {
   }
 
   private static requireActor(user: AuthUser | undefined): OrderActor {
-    if (!user) throw new UnauthorizedException('Sign in to manage your orders.');
+    if (!user)
+      throw new UnauthorizedException('Sign in to manage your orders.');
     return { userId: user.userId, role: user.role };
   }
 
@@ -126,8 +124,9 @@ export class OrderController {
       const cart = await this.cart.getUserCart(user.userId);
       return cart?.id ?? null;
     }
-    const signed = (req as Request & { signedCookies?: Record<string, unknown> })
-      .signedCookies;
+    const signed = (
+      req as Request & { signedCookies?: Record<string, unknown> }
+    ).signedCookies;
     const sessionId = signed?.[CART_SESSION_COOKIE];
     if (typeof sessionId !== 'string' || !sessionId.length) return null;
     const cart = await this.cart.getSessionCart(sessionId);

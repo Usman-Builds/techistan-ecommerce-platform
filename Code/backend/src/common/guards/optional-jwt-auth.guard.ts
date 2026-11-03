@@ -12,7 +12,10 @@ import { AuthGuard } from '@nestjs/passport';
 export class OptionalJwtAuthGuard extends AuthGuard('jwt') {
   // Passport still runs the 'jwt' strategy; we just swallow the "no/invalid
   // token" outcome instead of throwing a 401.
-  handleRequest<TUser = unknown>(_err: unknown, user: TUser): TUser | undefined {
+  handleRequest<TUser = unknown>(
+    _err: unknown,
+    user: TUser,
+  ): TUser | undefined {
     return user || undefined;
   }
 

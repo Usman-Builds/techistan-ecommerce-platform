@@ -90,7 +90,11 @@ describe('ReviewService.voteHelpful (FR-704)', () => {
       {
         review: {
           findUnique: () =>
-            Promise.resolve({ id: 'r1', status: ReviewStatus.PENDING, helpfulCount: 0 }),
+            Promise.resolve({
+              id: 'r1',
+              status: ReviewStatus.PENDING,
+              helpfulCount: 0,
+            }),
         },
       } as never,
       noAudit,
@@ -107,7 +111,11 @@ describe('ReviewService.voteHelpful (FR-704)', () => {
       {
         review: {
           findUnique: () =>
-            Promise.resolve({ id: 'r1', status: ReviewStatus.APPROVED, helpfulCount: 4 }),
+            Promise.resolve({
+              id: 'r1',
+              status: ReviewStatus.APPROVED,
+              helpfulCount: 4,
+            }),
         },
         reviewVote: { findUnique: () => Promise.resolve({ id: 'v1' }) },
         $transaction: () => {
@@ -128,7 +136,11 @@ describe('ReviewService.voteHelpful (FR-704)', () => {
       {
         review: {
           findUnique: () =>
-            Promise.resolve({ id: 'r1', status: ReviewStatus.APPROVED, helpfulCount: 4 }),
+            Promise.resolve({
+              id: 'r1',
+              status: ReviewStatus.APPROVED,
+              helpfulCount: 4,
+            }),
         },
         reviewVote: { findUnique: () => Promise.resolve(null) },
         $transaction: (fn: (tx: unknown) => unknown) =>
@@ -157,7 +169,8 @@ describe('ReviewService.listPublic — distribution + aggregate (FR-705)', () =>
         review: {
           findMany: () => undefined,
           count: () => undefined,
-          groupBy: () => Promise.resolve([{ rating: 5, _count: { rating: 1 } }]),
+          groupBy: () =>
+            Promise.resolve([{ rating: 5, _count: { rating: 1 } }]),
         },
         product: { findUnique: () => undefined },
         $transaction: () =>
@@ -217,12 +230,15 @@ describe('ReviewService.approve — recomputes aggregate ×100 (FR-703)', () => 
     const productUpdates: { ratingAverage: number; ratingCount: number }[] = [];
     const tx = {
       review: {
-        update: () => Promise.resolve({ id: 'r1', status: ReviewStatus.APPROVED }),
+        update: () =>
+          Promise.resolve({ id: 'r1', status: ReviewStatus.APPROVED }),
         aggregate: () =>
           Promise.resolve({ _avg: { rating: 4.5 }, _count: { rating: 2 } }),
       },
       product: {
-        update: (args: { data: { ratingAverage: number; ratingCount: number } }) => {
+        update: (args: {
+          data: { ratingAverage: number; ratingCount: number };
+        }) => {
           productUpdates.push(args.data);
           return Promise.resolve({});
         },
@@ -231,7 +247,8 @@ describe('ReviewService.approve — recomputes aggregate ×100 (FR-703)', () => 
     const service = new ReviewService(
       {
         review: {
-          findUnique: () => Promise.resolve({ id: 'r1', productId: 'p1', status: 'PENDING' }),
+          findUnique: () =>
+            Promise.resolve({ id: 'r1', productId: 'p1', status: 'PENDING' }),
         },
         $transaction: (fn: (t: unknown) => unknown) => Promise.resolve(fn(tx)),
       } as never,

@@ -83,7 +83,9 @@ export class AuthService {
     // provider are already verified,
     // implicitly by the provider.
     if (user.provider === 'LOCAL' && !user.emailVerified) {
-      throw new ForbiddenException('Please verify your email before logging in');
+      throw new ForbiddenException(
+        'Please verify your email before logging in',
+      );
     }
 
     // A banned account (set by an admin via the customers screen, script 15) can

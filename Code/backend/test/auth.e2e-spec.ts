@@ -38,14 +38,19 @@ describe('Auth (e2e)', () => {
 
   it('registers a CUSTOMER pending email verification and sets auth cookies', async () => {
     const res = await register('reg@example.com').expect(201);
-    expect(res.body.user).toMatchObject({ email: 'reg@example.com', role: 'CUSTOMER' });
+    expect(res.body.user).toMatchObject({
+      email: 'reg@example.com',
+      role: 'CUSTOMER',
+    });
     expect(res.body.user.password).toBeUndefined(); // never leak the hash
 
     const cookies = res.headers['set-cookie'] as unknown as string[];
     expect(cookies.some((c) => c.startsWith('access_token='))).toBe(true);
     expect(cookies.some((c) => c.includes('HttpOnly'))).toBe(true);
 
-    const row = await prisma.user.findUnique({ where: { email: 'reg@example.com' } });
+    const row = await prisma.user.findUnique({
+      where: { email: 'reg@example.com' },
+    });
     expect(row?.role).toBe(Role.CUSTOMER);
     expect(row?.emailVerified).toBeNull(); // must verify before login
   });
@@ -77,7 +82,9 @@ describe('Auth (e2e)', () => {
       .send({ token: raw })
       .expect(200);
 
-    const verified = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    const verified = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+    });
     expect(verified.emailVerified).not.toBeNull();
 
     // Now login works and sets an httpOnly access cookie.

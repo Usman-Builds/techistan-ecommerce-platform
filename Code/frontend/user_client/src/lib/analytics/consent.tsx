@@ -10,8 +10,7 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
-  useState,
+  useSyncExternalStore,
 } from "react";
 
 export type ConsentState = "granted" | "denied" | null;
@@ -27,27 +26,52 @@ type ConsentContextValue = {
 
 const ConsentContext = createContext<ConsentContextValue | null>(null);
 
-export function ConsentProvider({ children }: { children: React.ReactNode }) {
-  const [consent, setConsent] = useState<ConsentState>(null);
-  const [ready, setReady] = useState(false);
+// localStorage-backed store read via useSyncExternalStore. `memory` keeps the
+// choice for this tab when storage is unavailable (private mode / disabled).
+let memory: ConsentState = null;
+const listeners = new Set<() => void>();
 
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored === "granted" || stored === "denied") setConsent(stored);
-    } catch {
-      // ignore (private mode / storage disabled)
-    }
-    setReady(true);
-  }, []);
+function readConsent(): ConsentState {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored === "granted" || stored === "denied") return stored;
+  } catch {
+    // ignore (private mode / storage disabled)
+  }
+  return memory;
+}
+
+function subscribe(onChange: () => void): () => void {
+  listeners.add(onChange);
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === STORAGE_KEY) onChange();
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    listeners.delete(onChange);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
+const serverConsent = (): ConsentState => null;
+const noopSubscribe = () => () => {};
+
+export function ConsentProvider({ children }: { children: React.ReactNode }) {
+  const consent = useSyncExternalStore(subscribe, readConsent, serverConsent);
+  const ready = useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
 
   const persist = useCallback((value: Exclude<ConsentState, null>) => {
-    setConsent(value);
+    memory = value;
     try {
       localStorage.setItem(STORAGE_KEY, value);
     } catch {
       // ignore
     }
+    listeners.forEach((l) => l());
   }, []);
 
   const value: ConsentContextValue = {

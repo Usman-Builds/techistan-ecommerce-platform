@@ -28,8 +28,16 @@ describe('RBAC on /admin/* (e2e)', () => {
 
   beforeAll(async () => {
     await resetDb(prisma);
-    await makeUser(prisma, { email: 'cust@example.com', password: PASSWORD, role: Role.CUSTOMER });
-    await makeUser(prisma, { email: 'admin@example.com', password: PASSWORD, role: Role.ADMIN });
+    await makeUser(prisma, {
+      email: 'cust@example.com',
+      password: PASSWORD,
+      role: Role.CUSTOMER,
+    });
+    await makeUser(prisma, {
+      email: 'admin@example.com',
+      password: PASSWORD,
+      role: Role.ADMIN,
+    });
 
     const cust = await request(app.getHttpServer())
       .post('/auth/login')

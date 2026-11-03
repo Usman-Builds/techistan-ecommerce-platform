@@ -43,10 +43,7 @@ export class ExportService {
 
   private begin(res: Response, filename: string) {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="${filename}"`,
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   }
 
   async streamOrders(

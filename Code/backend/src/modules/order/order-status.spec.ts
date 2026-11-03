@@ -14,28 +14,58 @@ import {
  */
 describe('order status transitions', () => {
   it('permits the documented happy-path edges', () => {
-    expect(canTransition(OrderStatus.PENDING, OrderStatus.CONFIRMED)).toBe(true);
-    expect(canTransition(OrderStatus.CONFIRMED, OrderStatus.PROCESSING)).toBe(true);
-    expect(canTransition(OrderStatus.PROCESSING, OrderStatus.SHIPPED)).toBe(true);
-    expect(canTransition(OrderStatus.SHIPPED, OrderStatus.DELIVERED)).toBe(true);
-    expect(canTransition(OrderStatus.DELIVERED, OrderStatus.COMPLETED)).toBe(true);
+    expect(canTransition(OrderStatus.PENDING, OrderStatus.CONFIRMED)).toBe(
+      true,
+    );
+    expect(canTransition(OrderStatus.CONFIRMED, OrderStatus.PROCESSING)).toBe(
+      true,
+    );
+    expect(canTransition(OrderStatus.PROCESSING, OrderStatus.SHIPPED)).toBe(
+      true,
+    );
+    expect(canTransition(OrderStatus.SHIPPED, OrderStatus.DELIVERED)).toBe(
+      true,
+    );
+    expect(canTransition(OrderStatus.DELIVERED, OrderStatus.COMPLETED)).toBe(
+      true,
+    );
   });
 
   it('permits cancellation from open states only', () => {
-    expect(canTransition(OrderStatus.PENDING, OrderStatus.CANCELLED)).toBe(true);
-    expect(canTransition(OrderStatus.CONFIRMED, OrderStatus.CANCELLED)).toBe(true);
-    expect(canTransition(OrderStatus.PROCESSING, OrderStatus.CANCELLED)).toBe(true);
+    expect(canTransition(OrderStatus.PENDING, OrderStatus.CANCELLED)).toBe(
+      true,
+    );
+    expect(canTransition(OrderStatus.CONFIRMED, OrderStatus.CANCELLED)).toBe(
+      true,
+    );
+    expect(canTransition(OrderStatus.PROCESSING, OrderStatus.CANCELLED)).toBe(
+      true,
+    );
     // Cannot cancel once shipped/delivered.
-    expect(canTransition(OrderStatus.SHIPPED, OrderStatus.CANCELLED)).toBe(false);
-    expect(canTransition(OrderStatus.DELIVERED, OrderStatus.CANCELLED)).toBe(false);
+    expect(canTransition(OrderStatus.SHIPPED, OrderStatus.CANCELLED)).toBe(
+      false,
+    );
+    expect(canTransition(OrderStatus.DELIVERED, OrderStatus.CANCELLED)).toBe(
+      false,
+    );
   });
 
   it('rejects illegal transitions', () => {
-    expect(canTransition(OrderStatus.REFUNDED, OrderStatus.SHIPPED)).toBe(false);
-    expect(canTransition(OrderStatus.CANCELLED, OrderStatus.CONFIRMED)).toBe(false);
-    expect(canTransition(OrderStatus.COMPLETED, OrderStatus.SHIPPED)).toBe(false);
-    expect(canTransition(OrderStatus.PENDING, OrderStatus.DELIVERED)).toBe(false);
-    expect(canTransition(OrderStatus.DELIVERED, OrderStatus.PENDING)).toBe(false);
+    expect(canTransition(OrderStatus.REFUNDED, OrderStatus.SHIPPED)).toBe(
+      false,
+    );
+    expect(canTransition(OrderStatus.CANCELLED, OrderStatus.CONFIRMED)).toBe(
+      false,
+    );
+    expect(canTransition(OrderStatus.COMPLETED, OrderStatus.SHIPPED)).toBe(
+      false,
+    );
+    expect(canTransition(OrderStatus.PENDING, OrderStatus.DELIVERED)).toBe(
+      false,
+    );
+    expect(canTransition(OrderStatus.DELIVERED, OrderStatus.PENDING)).toBe(
+      false,
+    );
   });
 
   it('treats COMPLETED, CANCELLED, and REFUNDED as terminal', () => {

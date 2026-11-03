@@ -115,7 +115,10 @@ export function VariantBuilder({ initialVariants = [], onChange }: Props) {
   const hasAxes = axes.some((a) => a.name.trim() && a.values.length > 0);
 
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  // Declared before the emit effect below so it always runs first.
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   // Emit the current result whenever axes/cells change.
   useEffect(() => {

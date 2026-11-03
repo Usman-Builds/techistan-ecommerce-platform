@@ -1,8 +1,4 @@
-import {
-  ForbiddenException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import PDFDocument from 'pdfkit';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -139,14 +135,19 @@ export class InvoiceService {
       doc.font('Helvetica').fillColor('#374151');
       for (const item of order.items) {
         const opts = this.describeOptions(item.variantOptions);
-        const label = opts ? `${item.productTitle} (${opts})` : item.productTitle;
+        const label = opts
+          ? `${item.productTitle} (${opts})`
+          : item.productTitle;
         doc.text(label, 50, y, { width: 280 });
         doc.text(String(item.quantity), 340, y, { width: 40, align: 'right' });
         doc.text(money(item.unitPrice), 400, y, { width: 60, align: 'right' });
         doc.text(money(item.total), 470, y, { width: 75, align: 'right' });
         const rows = Math.ceil(doc.widthOfString(label) / 280) || 1;
         y += 14 * rows + 4;
-        doc.fillColor('#9ca3af').fontSize(8).text(`SKU ${item.sku}`, 50, y - 4);
+        doc
+          .fillColor('#9ca3af')
+          .fontSize(8)
+          .text(`SKU ${item.sku}`, 50, y - 4);
         doc.fillColor('#374151').fontSize(10);
         y += 10;
       }

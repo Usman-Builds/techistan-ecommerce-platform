@@ -59,7 +59,11 @@ export class PricingService {
     );
     // Tax on the discounted item subtotal (shipping is not taxed here).
     const taxableCents = Math.max(0, input.subtotalCents - input.discountCents);
-    const taxCents = this.calculateTax(input.address, taxableCents, setting?.taxRules);
+    const taxCents = this.calculateTax(
+      input.address,
+      taxableCents,
+      setting?.taxRules,
+    );
 
     return { shippingCents, shippingLabel, taxCents, currency };
   }
@@ -77,7 +81,9 @@ export class PricingService {
     const zones = this.parseZones(rawZones);
     const country = address.country?.toUpperCase();
     const zone =
-      zones.find((z) => z.countries?.some((c) => c.toUpperCase() === country)) ??
+      zones.find((z) =>
+        z.countries?.some((c) => c.toUpperCase() === country),
+      ) ??
       zones.find((z) => !z.countries || z.countries.length === 0) ??
       zones[0];
 

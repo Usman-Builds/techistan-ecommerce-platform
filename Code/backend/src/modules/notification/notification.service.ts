@@ -11,7 +11,10 @@ export interface CreateNotificationInput {
 }
 
 /** Admin-fanout input (no userId — it is created for every admin user). */
-export type CreateAdminNotificationInput = Omit<CreateNotificationInput, 'userId'>;
+export type CreateAdminNotificationInput = Omit<
+  CreateNotificationInput,
+  'userId'
+>;
 
 /**
  * In-app notification store (script 16, FR-902..904). Rows are owned by a user;
@@ -67,7 +70,7 @@ export class NotificationService {
           data:
             input.data === null || input.data === undefined
               ? Prisma.JsonNull
-              : (input.data as Prisma.InputJsonValue),
+              : input.data,
         })),
       });
     } catch (err) {

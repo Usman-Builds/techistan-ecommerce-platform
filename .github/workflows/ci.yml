@@ -1,0 +1,111 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Code/backend
+    env:
+      # Test-only secrets, never real values (CI uses a throwaway Postgres service).
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ecom_test?schema=public
+      JWT_SECRET: test-jwt-secret
+      JWT_REFRESH_SECRET: test-refresh-secret
+      USER_APP_URL: http://localhost:3001
+      ADMIN_APP_URL: http://localhost:3002
+      ADMIN_EMAIL: admin@shopforge.dev
+      ADMIN_PASSWORD: Admin!2345
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ecom_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Code/backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Apply migrations to the test DB
+        run: npx prisma migrate deploy
+      - name: Lint (no autofix, so CI fails on violations)
+        run: npx eslint "{src,apps,libs,test}/**/*.ts"
+      - name: Build
+        run: npm run build
+      - name: Unit tests + coverage gate
+        run: npm run test:cov -- --ci
+      - name: Integration tests (real Postgres)
+        run: |
+          printf 'NODE_ENV=test\nDATABASE_URL=%s\nJWT_SECRET=%s\nJWT_REFRESH_SECRET=%s\nUSER_APP_URL=%s\nADMIN_APP_URL=%s\nADMIN_EMAIL=%s\nADMIN_PASSWORD=%s\n' \
+            "$DATABASE_URL" "$JWT_SECRET" "$JWT_REFRESH_SECRET" "$USER_APP_URL" "$ADMIN_APP_URL" "$ADMIN_EMAIL" "$ADMIN_PASSWORD" > .env.test
+          npm run test:integration -- --ci
+
+  backend-security:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Code/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Code/backend/package-lock.json
+      - run: npm ci
+      # Hard gate: fail on production CRITICAL advisories.
+      - name: npm audit (production, critical)
+        run: npm audit --omit=dev --audit-level=critical
+      # Report-only for high advisories.
+      - name: npm audit (high, report-only)
+        run: npm audit --audit-level=high || true
+
+  frontend:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [user_client, admin_client]
+    defaults:
+      run:
+        working-directory: Code/frontend/${{ matrix.app }}
+    env:
+      # Dummy public values so `next build` succeeds without real keys.
+      NEXT_PUBLIC_API_URL: http://localhost:3000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3001
+      NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: demo
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Code/frontend/${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests (vitest)
+        run: npm test
+      - name: Build
+        run: npm run build

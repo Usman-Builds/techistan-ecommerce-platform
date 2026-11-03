@@ -57,26 +57,20 @@ describe('ProductService.validateVariantMatrix', () => {
     for (let i = 0; i < 101; i += 1) {
       variants.push(v({ Size: `S${i}` }));
     }
-    expect(() =>
-      service.validateVariantMatrix(['Size'], variants),
-    ).toThrow(/at most 100 variants/);
+    expect(() => service.validateVariantMatrix(['Size'], variants)).toThrow(
+      /at most 100 variants/,
+    );
   });
 
   it('rejects an unknown axis in a variant', () => {
     expect(() =>
-      service.validateVariantMatrix(
-        ['Size'],
-        [v({ Size: 'S', Color: 'Red' })],
-      ),
+      service.validateVariantMatrix(['Size'], [v({ Size: 'S', Color: 'Red' })]),
     ).toThrow(BadRequestException);
   });
 
   it('rejects a missing axis in a variant', () => {
     expect(() =>
-      service.validateVariantMatrix(
-        ['Size', 'Color'],
-        [v({ Size: 'S' })],
-      ),
+      service.validateVariantMatrix(['Size', 'Color'], [v({ Size: 'S' })]),
     ).toThrow(BadRequestException);
   });
 
@@ -90,20 +84,14 @@ describe('ProductService.validateVariantMatrix', () => {
     expect(() =>
       service.validateVariantMatrix(
         ['Size', 'Color'],
-        [
-          v({ Size: 'S', Color: 'Red' }),
-          v({ Size: 'S', Color: 'Red' }),
-        ],
+        [v({ Size: 'S', Color: 'Red' }), v({ Size: 'S', Color: 'Red' })],
       ),
     ).toThrow(/Duplicate variant combination/);
   });
 
   it('rejects duplicate axis names', () => {
     expect(() =>
-      service.validateVariantMatrix(
-        ['Size', 'Size'],
-        [v({ Size: 'S' })],
-      ),
+      service.validateVariantMatrix(['Size', 'Size'], [v({ Size: 'S' })]),
     ).toThrow(BadRequestException);
   });
 });

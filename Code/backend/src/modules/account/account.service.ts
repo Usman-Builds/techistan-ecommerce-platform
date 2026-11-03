@@ -143,10 +143,15 @@ export class AccountService {
     });
 
     if (user.status === 'PENDING_DELETION' && user.deletionScheduledAt) {
-      return { deletionScheduledAt: user.deletionScheduledAt, alreadyScheduled: true };
+      return {
+        deletionScheduledAt: user.deletionScheduledAt,
+        alreadyScheduled: true,
+      };
     }
 
-    const deletionScheduledAt = new Date(Date.now() + DELETION_GRACE_DAYS * DAY_MS);
+    const deletionScheduledAt = new Date(
+      Date.now() + DELETION_GRACE_DAYS * DAY_MS,
+    );
     await this.prisma.user.update({
       where: { id: userId },
       data: { status: 'PENDING_DELETION', deletionScheduledAt },
@@ -170,7 +175,9 @@ export class AccountService {
       select: { status: true },
     });
     if (user.status !== 'PENDING_DELETION') {
-      throw new BadRequestException('No account deletion is currently scheduled.');
+      throw new BadRequestException(
+        'No account deletion is currently scheduled.',
+      );
     }
 
     await this.prisma.user.update({

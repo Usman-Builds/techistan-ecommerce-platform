@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -147,6 +152,14 @@ export class AccountService {
         deletionScheduledAt: user.deletionScheduledAt,
         alreadyScheduled: true,
       };
+    }
+
+    // Only an ACTIVE account may enter the grace window. Otherwise a BANNED
+    // user could schedule deletion and then cancel it to come back ACTIVE.
+    if (user.status !== 'ACTIVE') {
+      throw new ForbiddenException(
+        'Account deletion is unavailable for this account. Please contact support.',
+      );
     }
 
     const deletionScheduledAt = new Date(

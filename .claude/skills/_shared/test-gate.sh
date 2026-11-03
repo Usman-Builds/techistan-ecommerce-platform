@@ -110,8 +110,13 @@ EOF
   CLEANUP+=("rm -f '$be/.env.test'")
 }
 
+lockfile_check() { # CI runs `npm ci` with Node 22's npm 10; a lockfile from a newer npm can fail there
+  step "$(basename "$1"): lockfile in sync (npm 10)" "$1" npx -y npm@10 ci --dry-run --no-audit --no-fund
+}
+
 run_backend() {
   local be="$CODE/backend"
+  lockfile_check "$be"
   ensure_deps "$be"
   step "backend: prisma generate" "$be" npx prisma generate
   step "backend: lint"            "$be" npx eslint "{src,apps,libs,test}/**/*.ts"
@@ -134,6 +139,7 @@ next_env() { # dummy public env so `next build` works without real keys
 
 run_frontend() {
   local key="$1" dir="$2"
+  lockfile_check "$dir"
   ensure_deps "$dir"
   next_env
   step "$key: lint"  "$dir" npm run lint

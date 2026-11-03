@@ -71,7 +71,8 @@ Fix the cause in code or in the workflow config. Never patch the symptom.
 - **npm audit:**
   1. Run `npm audit fix`, which only makes semver-compatible updates.
   2. Use `npm audit fix --force` or major upgrades only if there's no other way, and only after listing the breaking changes to the user and getting their OK.
-  3. If no fix exists upstream, stop and report the options: an override in `package.json` `overrides`, replacing the package, or accepting the risk. Let the user choose.
+  3. **Write lockfiles with CI's npm.** Node 22 ships npm 10. A lockfile written by a newer local npm (such as 11) can fail `npm ci` in CI with "Missing: <pkg> from lock file". Run `npx -y npm@10 install --package-lock-only`, then check with `npx -y npm@10 ci --dry-run`.
+  4. If no fix exists upstream, stop and report the options: an override in `package.json` `overrides`, replacing the package, or accepting the risk. Let the user choose.
 - **Workflow config** (`.github/workflows/ci.yml`): fix only genuine misconfigurations, such as a wrong `working-directory`, cache path or missing env var.
 
 ## 5. Verify locally

@@ -588,8 +588,17 @@ export class OrderService {
       0,
     );
 
-    // Restock the returned units.
+    // Claim the return and restock in one transaction. The conditional update
+    // only succeeds for the first of two concurrent approvals, so the units are
+    // restocked and refunded exactly once (#8).
     await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.returnRequest.updateMany({
+        where: { id: ret.id, status: ReturnStatus.REQUESTED },
+        data: { status: ReturnStatus.APPROVED },
+      });
+      if (claimed.count === 0) {
+        throw new BadRequestException('This return has already been resolved.');
+      }
       for (const i of items) {
         if (!i.variantId) continue;
         await tx.productVariant.update({
@@ -617,6 +626,21 @@ export class OrderService {
           `Return ${returnId} approved without a Stripe refund: ${err.message}`,
         );
       } else {
+        // Unexpected failure: release the claim and undo the restock so the
+        // approval can be retried cleanly.
+        await this.prisma.$transaction(async (tx) => {
+          await tx.returnRequest.updateMany({
+            where: { id: ret.id, status: ReturnStatus.APPROVED },
+            data: { status: ReturnStatus.REQUESTED },
+          });
+          for (const i of items) {
+            if (!i.variantId) continue;
+            await tx.productVariant.update({
+              where: { id: i.variantId },
+              data: { stock: { decrement: i.quantity } },
+            });
+          }
+        });
         throw err;
       }
     }
@@ -624,7 +648,6 @@ export class OrderService {
     const updated = await this.prisma.returnRequest.update({
       where: { id: ret.id },
       data: {
-        status: ReturnStatus.APPROVED,
         refundAmount: refunded,
         note: note ?? ret.note,
       },

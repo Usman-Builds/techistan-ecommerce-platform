@@ -79,7 +79,13 @@ function setup(refundImpl?: () => Promise<{ amountCents: number }>) {
     returnRequest,
     productVariant,
     order: {
-      findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'o1' }),
+      // 2 × 1500 returned out of an undiscounted 3000 order, paid in full.
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: 'o1',
+        subtotal: 3000,
+        discountTotal: 0,
+        payments: [{ status: 'SUCCEEDED', amount: 3500, refundedAmount: 0 }],
+      }),
     },
     $transaction: jest.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
   };

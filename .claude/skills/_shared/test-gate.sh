@@ -6,7 +6,7 @@
 #   bash .claude/skills/_shared/test-gate.sh [backend] [user] [admin] [all] [--e2e]
 #
 #   backend  eslint (no --fix) · nest build · jest + coverage gate · integration
-#            tests against a real Postgres (ecom_test)
+#            tests against a real Postgres (ecom_test) · npm audit (prod, critical)
 #   user     storefront: eslint · vitest · next build   (+ Playwright with --e2e)
 #   admin    admin console: eslint · vitest · next build
 #   all      all three (the default when no package is given)
@@ -120,6 +120,7 @@ run_backend() {
   setup_test_db
   step "backend: migrate ecom_test" "$be" env DATABASE_URL="$DATABASE_URL_TEST" npx prisma migrate deploy
   step "backend: integration"     "$be" npm run test:integration -- --ci
+  step "backend: audit (prod, critical)" "$be" npm audit --omit=dev --audit-level=critical
 }
 
 # -------------------------------------------------------------- frontends ----

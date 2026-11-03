@@ -6,7 +6,7 @@
  * side. Server variants are error-tolerant for SSR.
  */
 import { apiClient } from "./client";
-import { serverGet } from "@/lib/server/api";
+import { serverGet, serverGetOrNotFound } from "@/lib/server/api";
 
 export interface ProductRating {
   average: number | null;
@@ -127,7 +127,7 @@ export function getProductBySlug(slug: string): Promise<ProductDetail> {
 export async function getProductBySlugServer(
   slug: string,
 ): Promise<ProductDetail | null> {
-  return serverGet<ProductDetail>(`/products/${encodeURIComponent(slug)}`);
+  return serverGetOrNotFound<ProductDetail>(`/products/${encodeURIComponent(slug)}`);
 }
 
 export function listProducts(q: ProductQuery): Promise<ProductListResponse> {

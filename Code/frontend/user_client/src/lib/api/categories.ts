@@ -4,7 +4,7 @@
  * listing page (breadcrumb + immediate children).
  */
 import { apiClient } from "./client";
-import { serverGet } from "@/lib/server/api";
+import { serverGet, serverGetOrNotFound } from "@/lib/server/api";
 
 export interface CategoryTreeNode {
   id: string;
@@ -67,5 +67,5 @@ export async function getCategoryTreeServer(): Promise<CategoryTreeNode[]> {
 export async function getCategoryBySlugServer(
   slug: string,
 ): Promise<CategoryDetail | null> {
-  return serverGet<CategoryDetail>(`/categories/${encodeURIComponent(slug)}`);
+  return serverGetOrNotFound<CategoryDetail>(`/categories/${encodeURIComponent(slug)}`);
 }

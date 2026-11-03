@@ -23,6 +23,17 @@ const PRICE_BUCKETS: Array<{ min: number; max: number | null }> = [
   { min: 25000, max: null },
 ];
 
+/**
+ * A variant's effective (purchasable) price in SQL, for a `ProductVariant v`
+ * row: the sale price while a sale is active, else the regular price. Mirrors
+ * `effectivePriceCents` / `isSaleActive` in coupon/sale-pricing.ts, which the
+ * catalogue, cart and checkout use (#31); `now()` is the transaction time.
+ */
+const SALE_ACTIVE = Prisma.sql`(v."salePrice" IS NOT NULL AND v."salePrice" < v."price"
+  AND (v."saleStartsAt" IS NULL OR v."saleStartsAt" <= now())
+  AND (v."saleEndsAt" IS NULL OR v."saleEndsAt" >= now()))`;
+const EFFECTIVE_PRICE = Prisma.sql`(CASE WHEN ${SALE_ACTIVE} THEN v."salePrice" ELSE v."price" END)`;
+
 /** "N stars & up" rating facets. */
 const RATING_THRESHOLDS = [4, 3, 2, 1];
 
@@ -50,6 +61,7 @@ interface RawItem {
   slug: string;
   price_min: number | null;
   price_max: number | null;
+  on_sale: boolean;
   image_url: string | null;
   image_alt: string | null;
   rating_avg: number | null;
@@ -85,8 +97,9 @@ export class PgSearchProvider implements SearchProvider {
         p."id"    AS id,
         p."title" AS title,
         p."slug"  AS slug,
-        (SELECT MIN(v."price") FROM "ProductVariant" v WHERE v."productId" = p."id")::int AS price_min,
-        (SELECT MAX(v."price") FROM "ProductVariant" v WHERE v."productId" = p."id")::int AS price_max,
+        (SELECT MIN(${EFFECTIVE_PRICE}) FROM "ProductVariant" v WHERE v."productId" = p."id")::int AS price_min,
+        (SELECT MAX(${EFFECTIVE_PRICE}) FROM "ProductVariant" v WHERE v."productId" = p."id")::int AS price_max,
+        EXISTS (SELECT 1 FROM "ProductVariant" v WHERE v."productId" = p."id" AND ${SALE_ACTIVE}) AS on_sale,
         img."url" AS image_url,
         img."alt" AS image_alt,
         (SELECT AVG(r."rating")::float8 FROM "Review" r
@@ -233,10 +246,10 @@ export class PgSearchProvider implements SearchProvider {
       const min = params.minPrice ?? 0;
       const maxFrag =
         params.maxPrice != null
-          ? Prisma.sql` AND v."price" <= ${params.maxPrice}`
+          ? Prisma.sql` AND ${EFFECTIVE_PRICE} <= ${params.maxPrice}`
           : Prisma.empty;
       c.push(
-        Prisma.sql`EXISTS (SELECT 1 FROM "ProductVariant" v WHERE v."productId" = p."id" AND v."price" >= ${min}${maxFrag})`,
+        Prisma.sql`EXISTS (SELECT 1 FROM "ProductVariant" v WHERE v."productId" = p."id" AND ${EFFECTIVE_PRICE} >= ${min}${maxFrag})`,
       );
     }
     if (omit !== 'stock' && params.inStock) {
@@ -329,7 +342,7 @@ export class PgSearchProvider implements SearchProvider {
         LIMIT 50
       `),
       this.prisma.$queryRaw<{ min_price: number | null }[]>(Prisma.sql`
-        SELECT (SELECT MIN(v."price") FROM "ProductVariant" v WHERE v."productId" = p."id")::int AS min_price
+        SELECT (SELECT MIN(${EFFECTIVE_PRICE}) FROM "ProductVariant" v WHERE v."productId" = p."id")::int AS min_price
         FROM "Product" p WHERE ${this.whereClause(params, tsq, 'price')}
       `),
       this.prisma.$queryRaw<{ avg: number | null }[]>(Prisma.sql`
@@ -376,6 +389,7 @@ export class PgSearchProvider implements SearchProvider {
       slug: r.slug,
       priceMin: r.price_min ?? null,
       priceMax: r.price_max ?? null,
+      onSale: Boolean(r.on_sale),
       primaryImage: r.image_url
         ? { url: r.image_url, alt: r.image_alt ?? null }
         : null,

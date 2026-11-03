@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CategoryService } from '../category/category.service';
 import { NotifierService } from '../notification/notifier.service';
+import { effectivePriceCents } from '../coupon/sale-pricing';
 import {
   InventoryQueryDto,
   InventorySort,
@@ -103,13 +104,21 @@ export class InventoryService {
     ]);
 
     // Retail value has to be summed in JS: it is stock × price per row, and
-    // Prisma's aggregate cannot multiply two columns.
+    // Prisma's aggregate cannot multiply two columns. Each row is priced at what
+    // it sells for now: the sale price only while its window is active (#18).
     const valued = await this.prisma.productVariant.findMany({
       where,
-      select: { stock: true, price: true, salePrice: true },
+      select: {
+        stock: true,
+        price: true,
+        salePrice: true,
+        saleStartsAt: true,
+        saleEndsAt: true,
+      },
     });
+    const now = new Date();
     const retailValueCents = valued.reduce(
-      (sum, v) => sum + v.stock * (v.salePrice ?? v.price),
+      (sum, v) => sum + v.stock * effectivePriceCents(v, now),
       0,
     );
     const outOfStock = valued.filter((v) => v.stock === 0).length;

@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   Length,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -35,6 +36,7 @@ export class AutomaticDiscountRuleDto {
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(100)
   percentOff?: number;
 
   @IsOptional()

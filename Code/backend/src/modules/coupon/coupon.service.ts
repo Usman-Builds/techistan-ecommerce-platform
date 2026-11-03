@@ -497,6 +497,12 @@ export class CouponService {
   // ─────────────────────────── Admin: coupons (FR-806) ───────────────────────
 
   async createCoupon(dto: CreateCouponDto, actorId: number | null) {
+    this.assertPromotionRules({
+      type: dto.type,
+      value: dto.value,
+      startsAt: dto.startsAt,
+      endsAt: dto.expiresAt,
+    });
     const code = dto.code.trim().toUpperCase();
     await this.assertCodeAvailable(code);
     this.assertScopeTargets(dto.scope, dto.productIds, dto.categoryIds);
@@ -556,6 +562,12 @@ export class CouponService {
    * Coupon.code remains the real guarantee.
    */
   async generateCoupons(dto: GenerateCouponsDto, actorId: number | null) {
+    this.assertPromotionRules({
+      type: dto.type,
+      value: dto.value,
+      startsAt: dto.startsAt,
+      endsAt: dto.expiresAt,
+    });
     this.assertScopeTargets(dto.scope, dto.productIds, dto.categoryIds);
 
     const prefix = (dto.prefix ?? '').trim().toUpperCase();
@@ -806,7 +818,13 @@ export class CouponService {
   }
 
   async updateCoupon(id: string, dto: UpdateCouponDto, actorId: number | null) {
-    await this.getCoupon(id); // 404 if missing
+    const current = await this.getCoupon(id); // 404 if missing
+    this.assertPromotionRules({
+      type: dto.type ?? current.type,
+      value: dto.value ?? current.value,
+      startsAt: dto.startsAt !== undefined ? dto.startsAt : current.startsAt,
+      endsAt: dto.expiresAt !== undefined ? dto.expiresAt : current.expiresAt,
+    });
     const data: Prisma.CouponUpdateInput = {};
     if (dto.code !== undefined) {
       const code = dto.code.trim().toUpperCase();
@@ -950,6 +968,7 @@ export class CouponService {
     dto: CreateAutomaticDiscountDto,
     actorId: number | null,
   ) {
+    this.assertPromotionRules({ startsAt: dto.startsAt, endsAt: dto.endsAt });
     this.assertScopeTargets(dto.scope, dto.productIds, dto.categoryIds);
     const discount = await this.prisma.automaticDiscount.create({
       data: {
@@ -1032,7 +1051,11 @@ export class CouponService {
     dto: UpdateAutomaticDiscountDto,
     actorId: number | null,
   ) {
-    await this.getAutomaticDiscount(id);
+    const current = await this.getAutomaticDiscount(id);
+    this.assertPromotionRules({
+      startsAt: dto.startsAt !== undefined ? dto.startsAt : current.startsAt,
+      endsAt: dto.endsAt !== undefined ? dto.endsAt : current.endsAt,
+    });
     const data: Prisma.AutomaticDiscountUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.rule !== undefined) {
@@ -1294,6 +1317,33 @@ export class CouponService {
    * discount nothing (or, worse in a bulk sale, everything). Rejecting it at
    * the boundary keeps that from ever reaching the database.
    */
+  /**
+   * Promotion invariants (#14): a PERCENT coupon is a whole percent 0-100, and a
+   * start date can't be after the end date. Called with the MERGED values on
+   * update, so a partial edit can't produce an invalid coupon either.
+   */
+  private assertPromotionRules(rules: {
+    type?: CouponType;
+    value?: number;
+    startsAt?: Date | string | null;
+    endsAt?: Date | string | null;
+  }) {
+    if (
+      rules.type === CouponType.PERCENT &&
+      rules.value !== undefined &&
+      rules.value > 100
+    ) {
+      throw new BadRequestException('Percent must be between 0 and 100.');
+    }
+    if (rules.startsAt && rules.endsAt) {
+      if (new Date(rules.startsAt) > new Date(rules.endsAt)) {
+        throw new BadRequestException(
+          'The start date must be on or before the end date.',
+        );
+      }
+    }
+  }
+
   private assertScopeTargets(
     scope: PromotionScope | undefined,
     productIds: string[] | undefined,

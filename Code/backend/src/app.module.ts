@@ -7,7 +7,6 @@ import { ProxyAwareThrottlerGuard } from './common/guards/proxy-aware-throttler.
 import configuration from './config/configuration';
 import { validationSchema } from './config/validation';
 import { PrismaModule } from './prisma/prisma.module'; // if you already have it
-import { UserModule } from './modules/user/user.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './modules/auth/auth.module';
@@ -53,7 +52,6 @@ import { CronModule } from './modules/cron/cron.module';
     ScheduleModule.forRoot(),
 
     PrismaModule,
-    UserModule,
     AuthModule,
     MediaModule,
     AuditModule,

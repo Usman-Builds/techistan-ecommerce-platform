@@ -77,8 +77,8 @@ Modules are listed highest-risk first, which is also the scan order for `all`.
   - Every `/admin/*` route carries the admin role guard
 
 ### user / account / customer / address
-- **Paths:** `modules/user/`, `modules/account/` (incl. `account-deletion.cron.ts`), `modules/customer/`, `modules/address/`. UI: `user_client/src/app/account/`, `admin_client/src/app/(admin)/customers/`
-- **Specs:** `user.controller.spec.ts`, `user.service.spec.ts`
+- **Paths:** `modules/account/` (incl. `account-deletion.cron.ts`), `modules/customer/`, `modules/address/`. UI: `user_client/src/app/account/`, `admin_client/src/app/(admin)/customers/`
+- **Specs:** `test/rbac.e2e-spec.ts` (the legacy `/users` CRUD was removed in #23 and must stay 404)
 - **Risks:**
   - IDOR on address/profile ids
   - Password hash or tokens leaked in responses (select/omit)

@@ -149,6 +149,16 @@ export interface OrderQuery {
   search?: string;
   from?: string;
   to?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+/** One page of the customer's order history (#55). */
+export interface OrderPage {
+  items: Order[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export const createOrder = (input: CreateOrderInput) =>
@@ -163,7 +173,7 @@ export const listMyOrders = (query: OrderQuery = {}) => {
     if (v) q.set(k, String(v));
   }
   const s = q.toString();
-  return apiClient.get<Order[]>(`/orders${s ? `?${s}` : ""}`);
+  return apiClient.get<OrderPage>(`/orders${s ? `?${s}` : ""}`);
 };
 
 export const cancelOrder = (id: string) =>

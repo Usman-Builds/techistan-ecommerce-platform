@@ -4,7 +4,7 @@ import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 /**
  * Customer order-history filters (script 11, Task 3, FR-112). Scoped server-side
- * to the authenticated user's own orders.
+ * to the authenticated user's own orders, and paginated (#55).
  */
 export class OrderQueryDto {
   @IsOptional()
@@ -24,6 +24,21 @@ export class OrderQueryDto {
   @IsOptional()
   @IsString()
   to?: string;
+
+  /** 1-based page (#55). */
+  @IsOptional()
+  @Transform(({ value }) => parseInt(value as string, 10))
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  /** Orders per page; default 20, at most 50 (#55). */
+  @IsOptional()
+  @Transform(({ value }) => parseInt(value as string, 10))
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  pageSize?: number;
 }
 
 /**

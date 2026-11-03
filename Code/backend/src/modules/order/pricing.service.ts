@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OrderAddressDto } from './dto/create-order.dto';
+import { normalizeRegion } from './region-codes';
 
 /** A store shipping zone (shared shape with StoreSetting.shippingZones). */
 interface ShippingZone {
@@ -79,7 +80,7 @@ export class PricingService {
       return { shippingCents: 0, shippingLabel: 'Free shipping (coupon)' };
     }
     const zones = this.parseZones(rawZones);
-    const country = address.country?.toUpperCase();
+    const country = address.country?.trim().toUpperCase();
     const zone =
       zones.find((z) =>
         z.countries?.some((c) => c.toUpperCase() === country),
@@ -106,7 +107,7 @@ export class PricingService {
   ): number {
     if (!rawRules || typeof rawRules !== 'object') return 0;
     const rules = rawRules as Record<string, unknown>;
-    const country = address.country?.toUpperCase();
+    const country = address.country?.trim().toUpperCase();
     const countryRule = country
       ? (rules[country] as Record<string, unknown> | undefined)
       : undefined;
@@ -116,7 +117,13 @@ export class PricingService {
     let rateBps = this.readRate(countryRule);
     const states = countryRule.states as Record<string, unknown> | undefined;
     if (states && address.state) {
-      const stateRule = states[address.state.toUpperCase()] as
+      // The checkout field is free text (#42): match "CA", " ca ", "California"
+      // and rules keyed by either form, by comparing normalised codes.
+      const wanted = normalizeRegion(country, address.state);
+      const key = Object.keys(states).find(
+        (k) => normalizeRegion(country, k) === wanted,
+      );
+      const stateRule = (key ? states[key] : undefined) as
         | Record<string, unknown>
         | undefined;
       const stateRate = stateRule ? this.readRate(stateRule) : null;

@@ -11,6 +11,7 @@ import {
   OrderStatus,
   PaymentStatus,
   Prisma,
+  ProductStatus,
   ReturnStatus,
   Role,
 } from '@prisma/client';
@@ -810,7 +811,9 @@ export class OrderService {
           // a category-scoped coupon has to know which category each line
           // belongs to, and it must agree with what the cart told the shopper.
           include: {
-            product: { select: { id: true, title: true, categoryId: true } },
+            product: {
+              select: { id: true, title: true, categoryId: true, status: true },
+            },
           },
         },
       },
@@ -822,6 +825,12 @@ export class OrderService {
     return items.map((item) => {
       const { variant } = item;
       const title = variant.product.title;
+      // Never sell a DRAFT/ARCHIVED product, even if it is still in a cart (#15).
+      if (variant.product.status !== ProductStatus.ACTIVE) {
+        throw new BadRequestException(
+          `"${title}" is no longer available — please remove it from your cart.`,
+        );
+      }
       if (variant.stock <= 0) {
         throw new BadRequestException(`"${title}" is out of stock.`);
       }

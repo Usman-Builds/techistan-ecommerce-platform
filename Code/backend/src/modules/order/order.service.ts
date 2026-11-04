@@ -1,5 +1,7 @@
 import {
+  BadGatewayException,
   BadRequestException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
@@ -7,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { randomInt } from 'crypto';
 import {
+  Order,
   OrderNoteVisibility,
   OrderStatus,
   PaymentStatus,
@@ -37,6 +40,7 @@ import {
   buildTrackingUrl,
   canTransition,
   CUSTOMER_CANCELLABLE,
+  PAID_CANCELLABLE,
   RETURN_ELIGIBLE,
 } from './order-status';
 
@@ -547,6 +551,14 @@ export class OrderService {
       where: { id: orderId },
     });
     if (!order) throw new NotFoundException('Order not found');
+    // Cancelling a paid order refunds it and restocks it (#7).
+    if (
+      status === OrderStatus.CANCELLED &&
+      PAID_CANCELLABLE.includes(order.status)
+    ) {
+      await this.cancelPaidOrder(order, note, actor);
+      return this.getAdminOrder(orderId);
+    }
     // Cancelling an unpaid order: make its PaymentIntent unpayable first (#3).
     if (
       status === OrderStatus.CANCELLED &&
@@ -560,6 +572,112 @@ export class OrderService {
       note,
     });
     return this.getAdminOrder(orderId);
+  }
+
+  /**
+   * Cancel an order that has been paid but not shipped (#7). Payment took the
+   * stock and the coupon, so cancelling must give both back and refund the
+   * customer, not just change the status.
+   *
+   * 1. Claim the order with a conditional update, so of two concurrent
+   *    cancels only one proceeds.
+   * 2. Refund what's still captured. If Stripe refuses, the claim is undone
+   *    and the order stays as it was (still paid, still in stock).
+   * 3. Restock every line and release the coupon redemption, in one
+   *    transaction with the note and audit row.
+   *
+   * A full refund leaves the order REFUNDED, the same end state as any other
+   * cancelled-then-refunded order (#3).
+   */
+  private async cancelPaidOrder(
+    order: Order,
+    note: string | undefined,
+    actor: OrderActor,
+  ) {
+    const claimed = await this.prisma.order.updateMany({
+      where: { id: order.id, status: order.status },
+      data: { status: OrderStatus.CANCELLED },
+    });
+    if (claimed.count === 0) {
+      throw new BadRequestException(
+        'This order changed while you were cancelling it. Reload and try again.',
+      );
+    }
+
+    const payment = await this.prisma.payment.findFirst({
+      where: {
+        orderId: order.id,
+        status: {
+          in: [PaymentStatus.SUCCEEDED, PaymentStatus.PARTIALLY_REFUNDED],
+        },
+      },
+    });
+    let refundedCents = 0;
+    if (
+      payment?.stripePaymentIntentId &&
+      payment.amount > payment.refundedAmount
+    ) {
+      try {
+        const refund = await this.payment.processRefund(
+          order.id,
+          undefined,
+          actor.userId,
+        );
+        refundedCents = refund.amountCents;
+      } catch (err) {
+        await this.prisma.order.updateMany({
+          where: { id: order.id, status: OrderStatus.CANCELLED },
+          data: { status: order.status },
+        });
+        if (err instanceof HttpException) throw err;
+        throw new BadGatewayException(
+          `The refund failed, so the order was not cancelled: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    const items = await this.prisma.orderItem.findMany({
+      where: { orderId: order.id },
+      select: { variantId: true, quantity: true },
+    });
+    await this.prisma.$transaction(async (tx) => {
+      for (const i of items) {
+        if (!i.variantId) continue;
+        await tx.productVariant.update({
+          where: { id: i.variantId },
+          data: { stock: { increment: i.quantity } },
+        });
+      }
+      await this.coupon.releaseRedemptions(tx, order.id);
+      if (note) {
+        await tx.orderNote.create({
+          data: {
+            orderId: order.id,
+            authorId: actor.userId,
+            body: note,
+            visibility: OrderNoteVisibility.INTERNAL,
+          },
+        });
+      }
+      await this.audit.record(
+        {
+          actorId: actor.userId,
+          action: 'order.status',
+          entityType: 'Order',
+          entityId: order.id,
+          metadata: {
+            from: order.status,
+            to: OrderStatus.CANCELLED,
+            refundedCents,
+            restocked: true,
+          },
+        },
+        tx,
+      );
+    });
+    void this.notifier.orderStatusChanged(order, OrderStatus.CANCELLED);
   }
 
   /**

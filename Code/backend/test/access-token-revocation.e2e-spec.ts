@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { INestApplication } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import request from 'supertest';
@@ -95,11 +96,18 @@ describe('Access token revocation (e2e)', () => {
       password: PASSWORD,
     });
     const token = await login('c@example.com');
-    // What resetPassword does to the session: the stored refresh token is cleared.
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { refreshToken: null },
+    const raw = 'reset-token-for-revocation-test';
+    await prisma.passwordResetToken.create({
+      data: {
+        userId: user.id,
+        tokenHash: createHash('sha256').update(raw).digest('hex'),
+        expiresAt: new Date(Date.now() + 60_000),
+      },
     });
+    await request(app.getHttpServer())
+      .post('/auth/reset-password')
+      .send({ token: raw, password: 'N3w!password' })
+      .expect(200);
     await me(token).expect(401);
   });
 

@@ -129,7 +129,11 @@ describe('Auth (e2e)', () => {
     expect(secondRefresh).toBeTruthy();
     expect(secondRefresh).not.toBe(firstRefresh);
 
-    // The superseded token is no longer accepted (rotation invalidates it).
+    // Once the concurrent-refresh grace window (#22) has passed, the
+    // superseded token is no longer accepted (rotation invalidates it).
+    await prisma.refreshSession.updateMany({
+      data: { rotatedAt: new Date(Date.now() - 60_000) },
+    });
     await request(app.getHttpServer())
       .post('/auth/refresh')
       .set('Cookie', `refresh_token=${firstRefresh}`)

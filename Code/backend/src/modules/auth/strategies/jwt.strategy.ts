@@ -43,7 +43,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    * until it expires (24 h by default). The role comes from the database, so a
    * demoted admin loses admin access immediately.
    */
-  async validate(payload: { sub: number }) {
+  async validate(payload: { sub: number; sid?: string }) {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
       select: {
@@ -52,9 +52,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         role: true,
         status: true,
         refreshToken: true,
+        // Per-device session (#22); tokens issued before it carry no sid.
+        refreshSessions: payload.sid
+          ? { where: { id: payload.sid }, select: { id: true } }
+          : false,
       },
     });
-    if (!user || user.refreshToken == null) {
+    const sessionAlive = payload.sid
+      ? (user?.refreshSessions?.length ?? 0) > 0
+      : user?.refreshToken != null;
+    if (!user || !sessionAlive) {
       throw new UnauthorizedException(
         'Your session has ended. Please sign in again.',
       );

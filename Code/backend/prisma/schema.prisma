@@ -115,7 +115,9 @@ model User {
   password     String? // nullable for Google users
   googleId     String?      @unique // Store Google account ID if authenticated via Google
   provider     AuthProvider @default(LOCAL) // Tracks login method: LOCAL or GOOGLE
-  refreshToken String? // Store latest JWT refresh token if applicable
+  /// Legacy single-session refresh hash, from before per-device sessions
+  /// (#22). Only read for tokens issued before then; cleared to revoke them.
+  refreshToken String?
 
   // added in this script
   role          Role       @default(CUSTOMER)
@@ -149,8 +151,27 @@ model User {
   passwordResetTokens PasswordResetToken[]
   recentlyViewed      RecentlyViewed[]
   mediaUploads        MediaAsset[]
+  refreshSessions     RefreshSession[]
 
   @@index([role])
+}
+
+/// One signed-in device or browser (#22). The refresh token rotates within the
+/// session; replaying a superseded token revokes just this session.
+model RefreshSession {
+  id           String    @id // carried in the tokens as `sid`
+  userId       Int
+  tokenHash    String    @unique // sha256 of the current refresh token
+  /// The token rotated out most recently, accepted for a short grace window
+  /// so two tabs refreshing at once don't trip reuse detection.
+  previousHash String?
+  rotatedAt    DateTime?
+  expiresAt    DateTime
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model EmailVerificationToken {

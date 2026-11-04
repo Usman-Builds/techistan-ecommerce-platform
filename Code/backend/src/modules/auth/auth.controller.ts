@@ -146,10 +146,7 @@ export class AuthController {
   @Post('logout')
   @HttpCode(200)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const userId = this.authService.resolveUserIdFromRefresh(
-      this.readCookie(req, REFRESH_TOKEN_COOKIE),
-    );
-    if (userId) await this.authService.logout(userId);
+    await this.authService.logout(this.readCookie(req, REFRESH_TOKEN_COOKIE));
     this.clearAuthCookies(res);
     return { success: true };
   }

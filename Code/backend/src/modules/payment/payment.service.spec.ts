@@ -63,7 +63,11 @@ function setup(
       }),
       updateMany: jest.fn().mockResolvedValue({ count: opts.updateCount ?? 1 }),
     },
-    order: { update: jest.fn() },
+    order: {
+      update: jest.fn(),
+      // #3: confirmation is conditional on the order still being PENDING.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     productVariant: { update: jest.fn() },
     cartItem: { deleteMany: jest.fn() },
     cart: { updateMany: jest.fn() },
@@ -114,8 +118,8 @@ describe('PaymentService', () => {
           data: { status: PaymentStatus.SUCCEEDED, method: 'card' },
         }),
       );
-      expect(tx.order.update).toHaveBeenCalledWith({
-        where: { id: 'ord_1' },
+      expect(tx.order.updateMany).toHaveBeenCalledWith({
+        where: { id: 'ord_1', status: OrderStatus.PENDING },
         data: { status: OrderStatus.CONFIRMED },
       });
       expect(tx.productVariant.update).toHaveBeenCalledWith({
@@ -131,7 +135,7 @@ describe('PaymentService', () => {
 
       await expect(service.reconcile('pi_1')).resolves.toBe(false);
 
-      expect(tx.order.update).not.toHaveBeenCalled();
+      expect(tx.order.updateMany).not.toHaveBeenCalled();
       expect(tx.productVariant.update).not.toHaveBeenCalled();
       expect(tx.cartItem.deleteMany).not.toHaveBeenCalled();
       expect(notifier.orderConfirmed).not.toHaveBeenCalled();
@@ -202,7 +206,7 @@ describe('PaymentService', () => {
       expect(tx.processedWebhookEvent.create).toHaveBeenCalledWith({
         data: { id: 'evt_1', type: 'payment_intent.succeeded' },
       });
-      expect(tx.order.update).toHaveBeenCalledTimes(1);
+      expect(tx.order.updateMany).toHaveBeenCalledTimes(1);
     });
 
     it('ignores a redelivered event', async () => {
@@ -217,7 +221,7 @@ describe('PaymentService', () => {
       await expect(
         service.handleEvent(succeeded(intent)),
       ).resolves.toBeUndefined();
-      expect(tx.order.update).not.toHaveBeenCalled();
+      expect(tx.order.updateMany).not.toHaveBeenCalled();
       expect(notifier.orderConfirmed).not.toHaveBeenCalled();
     });
   });

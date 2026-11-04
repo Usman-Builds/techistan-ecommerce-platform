@@ -135,6 +135,48 @@ export class PaymentService {
     return intent.client_secret ?? null;
   }
 
+  /**
+   * Cancel an unpaid order's PaymentIntent at Stripe so it can no longer be
+   * paid, then mark the Payment FAILED (#3). Called before an order is
+   * cancelled. An intent Stripe already cancelled is fine; one that is
+   * succeeding or succeeded can't be cancelled, so the order cancel is refused
+   * (the payment will confirm the order instead). A Payment with no intent
+   * (none was created, or Stripe is not configured) needs no Stripe call.
+   */
+  async cancelOpenIntent(orderId: string): Promise<void> {
+    const payment = await this.prisma.payment.findFirst({
+      where: { orderId, status: { in: UNPAID_STATUSES } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!payment) return;
+
+    if (payment.stripePaymentIntentId) {
+      const stripe = this.client();
+      try {
+        await stripe.paymentIntents.cancel(payment.stripePaymentIntentId);
+      } catch (err) {
+        const intent = await stripe.paymentIntents.retrieve(
+          payment.stripePaymentIntentId,
+        );
+        if (intent.status !== 'canceled') {
+          this.logger.warn(
+            `Could not cancel intent ${intent.id} (${intent.status}): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          throw new BadRequestException(
+            'This order is already being paid and can no longer be cancelled.',
+          );
+        }
+      }
+    }
+
+    await this.prisma.payment.updateMany({
+      where: { id: payment.id, status: { in: UNPAID_STATUSES } },
+      data: { status: PaymentStatus.FAILED },
+    });
+  }
+
   // ─────────────────────────── Webhook fallback ──────────────────────────────
 
   private readonly lastReconciled = new Map<string, number>();
@@ -231,7 +273,8 @@ export class PaymentService {
     intent: Stripe.PaymentIntent,
     event?: Stripe.Event,
   ): Promise<boolean> {
-    let confirmed: OrderForConfirmation | null = null;
+    let confirmed: OrderForConfirmation | { orphanOrderId: string } | null =
+      null;
     try {
       confirmed = await this.prisma.$transaction(async (tx) => {
         // Idempotency anchor for redelivery: unique PK → throws P2002 on a duplicate.
@@ -263,10 +306,20 @@ export class PaymentService {
         // Already paid (or refunded): never re-apply side effects.
         if (count === 0) return null;
 
-        await tx.order.update({
-          where: { id: order.id },
+        // Confirm only an order still awaiting payment (#3). A payment that
+        // lands after the order was cancelled must not resurrect it: no stock,
+        // coupon or cart side effects; the money is refunded after commit.
+        const moved = await tx.order.updateMany({
+          where: { id: order.id, status: OrderStatus.PENDING },
           data: { status: OrderStatus.CONFIRMED },
         });
+        if (moved.count === 0) {
+          this.logger.error(
+            `Payment ${intent.id} succeeded for order ${order.orderNumber}, ` +
+              `which is no longer PENDING (${order.status}). Refunding it.`,
+          );
+          return { orphanOrderId: order.id };
+        }
 
         // Decrement stock now (not at order creation) — the sale is real.
         for (const item of order.items) {
@@ -333,10 +386,32 @@ export class PaymentService {
       throw err;
     }
 
-    // Post-commit: confirmation receipt + admin new-order alert (best-effort).
     if (!confirmed) return false;
+    if ('orphanOrderId' in confirmed) {
+      await this.refundOrphanedPayment(confirmed.orphanOrderId);
+      return true;
+    }
+    // Post-commit: confirmation receipt + admin new-order alert (best-effort).
     void this.notifier.orderConfirmed(confirmed);
     return true;
+  }
+
+  /**
+   * Refund, in full, a payment that succeeded for an order that was cancelled
+   * in the meantime (#3). Best-effort: a failure is logged loudly for manual
+   * follow-up and never fails the webhook (Stripe would only redeliver an
+   * event we already recorded).
+   */
+  private async refundOrphanedPayment(orderId: string): Promise<void> {
+    try {
+      await this.processRefund(orderId, undefined, null);
+    } catch (err) {
+      this.logger.error(
+        `Automatic refund failed for cancelled order ${orderId}; refund it manually: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   /**

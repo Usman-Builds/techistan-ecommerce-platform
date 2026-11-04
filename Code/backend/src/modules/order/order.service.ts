@@ -602,9 +602,13 @@ export class OrderService {
   }
 
   /**
-   * Approve a return (FR-508): mark APPROVED, restock the returned units, and best-
-   * effort refund the returned amount. A missing-payment / unconfigured-Stripe
-   * situation does not block the approval — it is recorded with a zero refund.
+   * Approve a return (FR-508): mark APPROVED, restock the returned units, and
+   * refund what the customer actually paid for them (#10): each returned line's
+   * total minus its pro-rata share of the order discount, capped at the
+   * payment's remaining refundable balance. An order with nothing refundable
+   * (no captured payment, or already fully refunded) and an unconfigured Stripe
+   * are recorded with a zero refund; any other refund failure undoes the
+   * approval so the admin sees it and can retry.
    */
   async approveReturn(
     orderId: string,
@@ -615,12 +619,10 @@ export class OrderService {
     const ret = await this.loadPendingReturn(orderId, returnId);
     const order = await this.prisma.order.findUniqueOrThrow({
       where: { id: orderId },
+      include: { payments: true },
     });
     const items = OrderService.parseReturnItems(ret.items);
-    const refundTarget = items.reduce(
-      (sum, i) => sum + i.unitPrice * i.quantity,
-      0,
-    );
+    const refundTarget = OrderService.returnRefundCents(order, items);
 
     // Claim the return and restock in one transaction. The conditional update
     // only succeeds for the first of two concurrent approvals, so the units are
@@ -642,40 +644,39 @@ export class OrderService {
       }
     });
 
-    // Best-effort refund of the returned amount.
     let refunded = 0;
-    try {
-      const result = await this.payment.processRefund(
-        orderId,
-        refundTarget,
-        actor.userId,
-      );
-      refunded = result.amountCents;
-    } catch (err) {
-      if (
-        err instanceof ServiceUnavailableException ||
-        err instanceof BadRequestException
-      ) {
-        this.logger.warn(
-          `Return ${returnId} approved without a Stripe refund: ${err.message}`,
+    if (refundTarget > 0) {
+      try {
+        const result = await this.payment.processRefund(
+          orderId,
+          refundTarget,
+          actor.userId,
         );
-      } else {
-        // Unexpected failure: release the claim and undo the restock so the
-        // approval can be retried cleanly.
-        await this.prisma.$transaction(async (tx) => {
-          await tx.returnRequest.updateMany({
-            where: { id: ret.id, status: ReturnStatus.APPROVED },
-            data: { status: ReturnStatus.REQUESTED },
-          });
-          for (const i of items) {
-            if (!i.variantId) continue;
-            await tx.productVariant.update({
-              where: { id: i.variantId },
-              data: { stock: { decrement: i.quantity } },
+        refunded = result.amountCents;
+      } catch (err) {
+        if (err instanceof ServiceUnavailableException) {
+          this.logger.warn(
+            `Return ${returnId} approved without a Stripe refund: ${err.message}`,
+          );
+        } else {
+          // Release the claim and undo the restock so the approval can be
+          // retried once the refund problem is fixed. Never approve with a
+          // silent $0 refund.
+          await this.prisma.$transaction(async (tx) => {
+            await tx.returnRequest.updateMany({
+              where: { id: ret.id, status: ReturnStatus.APPROVED },
+              data: { status: ReturnStatus.REQUESTED },
             });
-          }
-        });
-        throw err;
+            for (const i of items) {
+              if (!i.variantId) continue;
+              await tx.productVariant.update({
+                where: { id: i.variantId },
+                data: { stock: { decrement: i.quantity } },
+              });
+            }
+          });
+          throw err;
+        }
       }
     }
 
@@ -1192,5 +1193,43 @@ export class OrderService {
       refundAmount: ret.refundAmount,
       createdAt: ret.createdAt,
     };
+  }
+
+  /**
+   * What the customer paid for the returned units (#10): each line's total
+   * minus its share of the order-level discount (coupon + automatic
+   * discounts), prorated by line value against the subtotal, capped at what
+   * is still refundable on the captured payment. Shipping and tax are not
+   * included, matching the previous behaviour.
+   */
+  static returnRefundCents(
+    order: {
+      subtotal: number;
+      discountTotal: number;
+      payments: {
+        status: PaymentStatus;
+        amount: number;
+        refundedAmount: number;
+      }[];
+    },
+    items: ReturnItemSnapshot[],
+  ): number {
+    const gross = items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
+    const discountShare =
+      order.subtotal > 0
+        ? Math.round(
+            (Math.min(order.discountTotal, order.subtotal) * gross) /
+              order.subtotal,
+          )
+        : 0;
+    const paid = Math.max(0, gross - discountShare);
+    // Same payment PaymentService.processRefund refunds against.
+    const payment = order.payments.find(
+      (p) => p.status === PaymentStatus.SUCCEEDED || p.refundedAmount > 0,
+    );
+    const refundable = payment
+      ? Math.max(0, payment.amount - payment.refundedAmount)
+      : 0;
+    return Math.min(paid, refundable);
   }
 }

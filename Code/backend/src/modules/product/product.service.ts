@@ -71,6 +71,17 @@ const LIST_INCLUDE = Prisma.validator<Prisma.ProductInclude>()({
 
 type ListRow = Prisma.ProductGetPayload<{ include: typeof LIST_INCLUDE }>;
 
+/**
+ * SQL for a `ProductVariant v` row's effective price (#29): the sale price
+ * while a sale is active, else the regular price. Mirrors `isSaleActive` /
+ * `effectivePriceCents` (coupon/sale-pricing.ts).
+ */
+const EFFECTIVE_PRICE_SQL = Prisma.sql`(CASE
+  WHEN v."salePrice" IS NOT NULL AND v."salePrice" < v."price"
+   AND (v."saleStartsAt" IS NULL OR v."saleStartsAt" <= now())
+   AND (v."saleEndsAt" IS NULL OR v."saleEndsAt" >= now())
+  THEN v."salePrice" ELSE v."price" END)`;
+
 @Injectable()
 export class ProductService {
   constructor(
@@ -780,10 +791,8 @@ export class ProductService {
     // variant to satisfy every condition, which is what the filter means.
     const variantWhere: Prisma.ProductVariantWhereInput = {};
     if (dto.minPrice != null || dto.maxPrice != null) {
-      variantWhere.price = {
-        gte: dto.minPrice ?? undefined,
-        lte: dto.maxPrice ?? undefined,
-      };
+      // On the effective (sale-aware) price, the one the card shows (#29).
+      variantWhere.AND = [this.effectivePriceWhere(dto.minPrice, dto.maxPrice)];
     }
     if (isAdmin && dto.onSale) variantWhere.salePrice = { not: null };
     if (isAdmin && dto.stock === StockFilter.IN) variantWhere.stock = { gt: 0 };
@@ -835,8 +844,39 @@ export class ProductService {
   }
 
   /**
-   * Price sorting via a `groupBy` over variants ordered by their min price —
-   * correct and paginated without raw SQL. Returns hydrated list rows.
+   * Prisma filter: the variant's effective price (#29) is within [min, max].
+   * Mirrors `isSaleActive` / `effectivePriceCents` (coupon/sale-pricing.ts): a
+   * sale price below the regular price whose window contains `now` replaces the
+   * regular price.
+   */
+  private effectivePriceWhere(
+    min?: number | null,
+    max?: number | null,
+    now: Date = new Date(),
+  ): Prisma.ProductVariantWhereInput {
+    const range = { gte: min ?? undefined, lte: max ?? undefined };
+    const regular = this.prisma.productVariant.fields.price;
+    const window: Prisma.ProductVariantWhereInput[] = [
+      { OR: [{ saleStartsAt: null }, { saleStartsAt: { lte: now } }] },
+      { OR: [{ saleEndsAt: null }, { saleEndsAt: { gte: now } }] },
+    ];
+    const saleActive: Prisma.ProductVariantWhereInput = {
+      salePrice: { not: null, lt: regular },
+      AND: window,
+    };
+    return {
+      OR: [
+        { salePrice: { not: null, lt: regular, ...range }, AND: window },
+        { NOT: saleActive, price: range },
+      ],
+    };
+  }
+
+  /**
+   * Price sorting on the effective (sale-aware) price (#29). Prisma can't order
+   * by a computed expression, so: collect the matching product ids with the
+   * normal filter, then let SQL order those by MIN(effective price) and
+   * paginate. Returns hydrated list rows in price order.
    */
   private async listByPrice(
     dto: ListProductsDto,
@@ -855,21 +895,39 @@ export class ProductService {
       categoryIds,
       lowStockThreshold,
     );
-    const priceFilter: Prisma.IntFilter | undefined =
-      dto.minPrice != null || dto.maxPrice != null
-        ? { gte: dto.minPrice ?? undefined, lte: dto.maxPrice ?? undefined }
-        : undefined;
+    const hasRange = dto.minPrice != null || dto.maxPrice != null;
 
-    const grouped = await this.prisma.productVariant.groupBy({
+    const matching = await this.prisma.productVariant.groupBy({
       by: ['productId'],
-      where: { product: productWhere, price: priceFilter },
-      _min: { price: true },
-      orderBy: { _min: { price: direction } },
-      skip,
-      take,
+      where: {
+        product: productWhere,
+        ...(hasRange
+          ? this.effectivePriceWhere(dto.minPrice, dto.maxPrice)
+          : {}),
+      },
     });
+    if (matching.length === 0) return [];
 
-    const ids = grouped.map((g) => g.productId);
+    // Only variants inside the requested range count toward a product's price,
+    // as before. Ties break on id so pages are stable.
+    const rangeSql = Prisma.sql`${
+      dto.minPrice != null
+        ? Prisma.sql` AND ${EFFECTIVE_PRICE_SQL} >= ${dto.minPrice}`
+        : Prisma.empty
+    }${
+      dto.maxPrice != null
+        ? Prisma.sql` AND ${EFFECTIVE_PRICE_SQL} <= ${dto.maxPrice}`
+        : Prisma.empty
+    }`;
+    const ordered = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT v."productId" AS id
+        FROM "ProductVariant" v
+       WHERE v."productId" IN (${Prisma.join(matching.map((g) => g.productId))})${rangeSql}
+       GROUP BY v."productId"
+       ORDER BY MIN(${EFFECTIVE_PRICE_SQL}) ${Prisma.raw(direction === 'asc' ? 'ASC' : 'DESC')}, v."productId" ASC
+       LIMIT ${take} OFFSET ${skip}`;
+
+    const ids = ordered.map((r) => r.id);
     if (ids.length === 0) return [];
 
     const rows = await this.prisma.product.findMany({

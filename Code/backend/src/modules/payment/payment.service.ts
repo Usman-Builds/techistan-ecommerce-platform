@@ -17,6 +17,7 @@ import {
   NotifierService,
   OrderForConfirmation,
 } from '../notification/notifier.service';
+import { takeStock } from '../inventory/take-stock';
 import { STRIPE_CLIENT } from './stripe.provider';
 
 interface CreateIntentInput {
@@ -336,13 +337,31 @@ export class PaymentService {
           return { orphanOrderId: order.id };
         }
 
-        // Decrement stock now (not at order creation) — the sale is real.
+        // Decrement stock now (not at order creation) — the sale is real. Only
+        // take what's there (#6): if another paid order got the last units
+        // first, give back what this one took, cancel it and refund it.
+        const taken: typeof order.items = [];
         for (const item of order.items) {
           if (!item.variantId) continue;
-          await tx.productVariant.update({
-            where: { id: item.variantId },
-            data: { stock: { decrement: item.quantity } },
+          if (await takeStock(tx, item.variantId, item.quantity)) {
+            taken.push(item);
+            continue;
+          }
+          for (const t of taken) {
+            await tx.productVariant.update({
+              where: { id: t.variantId! },
+              data: { stock: { increment: t.quantity } },
+            });
+          }
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: OrderStatus.CANCELLED },
           });
+          this.logger.error(
+            `Order ${order.orderNumber} was paid (intent ${intent.id}) but ` +
+              `${item.sku} is out of stock. Cancelling and refunding it.`,
+          );
+          return { orphanOrderId: order.id };
         }
 
         // Finalize coupon redemption + clear the originating cart.

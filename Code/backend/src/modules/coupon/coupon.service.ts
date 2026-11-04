@@ -456,6 +456,28 @@ export class CouponService {
   }
 
   /**
+   * Undo an order's coupon redemptions when the order is cancelled after
+   * payment (#7), so the use counts toward no limit. Runs in the caller's
+   * transaction.
+   */
+  async releaseRedemptions(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+  ): Promise<void> {
+    const rows = await tx.couponRedemption.findMany({
+      where: { orderId },
+      select: { id: true, couponId: true },
+    });
+    for (const r of rows) {
+      await tx.couponRedemption.delete({ where: { id: r.id } });
+      await tx.coupon.updateMany({
+        where: { id: r.couponId, usedCount: { gt: 0 } },
+        data: { usedCount: { decrement: 1 } },
+      });
+    }
+  }
+
+  /**
    * Which limit (if any) one more redemption would exceed, counted from the
    * finalized redemptions. Call with the coupon row locked.
    */

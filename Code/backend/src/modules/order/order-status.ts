@@ -33,6 +33,15 @@ export function canTransition(from: OrderStatus, to: OrderStatus): boolean {
   return ORDER_TRANSITIONS[from]?.includes(to) ?? false;
 }
 
+/**
+ * Paid but not yet shipped: an admin cancel from here refunds the payment and
+ * restocks the items (#7).
+ */
+export const PAID_CANCELLABLE: OrderStatus[] = [
+  OrderStatus.CONFIRMED,
+  OrderStatus.PROCESSING,
+];
+
 /** Statuses from which a customer may still self-cancel (unpaid orders only). */
 export const CUSTOMER_CANCELLABLE: OrderStatus[] = [OrderStatus.PENDING];
 

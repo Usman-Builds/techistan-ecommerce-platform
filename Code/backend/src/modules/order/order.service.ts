@@ -20,7 +20,12 @@ import { AuditService } from '../audit/audit.service';
 import { NotifierService } from '../notification/notifier.service';
 import { CouponService, type PromotionLine } from '../coupon/coupon.service';
 import { effectivePriceCents, isSaleActive } from '../coupon/sale-pricing';
-import { takeStock } from '../inventory/take-stock';
+import {
+  LowStockAlert,
+  lowStockCrossings,
+  StockTaken,
+  takeStock,
+} from '../inventory/take-stock';
 import { PaymentService } from '../payment/payment.service';
 import { PricingService } from './pricing.service';
 import { CreateOrderDto, OrderAddressDto } from './dto/create-order.dto';
@@ -989,8 +994,9 @@ export class OrderService {
 
     for (let attempt = 0; attempt < 5; attempt++) {
       const orderNumber = OrderService.generateOrderNumber();
+      let lowStock: LowStockAlert[] = [];
       try {
-        return await this.prisma.$transaction(async (tx) => {
+        const created = await this.prisma.$transaction(async (tx) => {
           const order = await tx.order.create({
             data: {
               orderNumber,
@@ -1036,14 +1042,19 @@ export class OrderService {
           // A $0 order is finalized inline (no Stripe): decrement stock, record
           // redemption, and clear the cart — the same effects the webhook applies.
           if (zeroDue) {
+            const sold: StockTaken[] = [];
             for (const l of lines) {
               // Guarded (#6): rolls the whole order back if the stock is gone.
-              if (!(await takeStock(tx, l.variantId, l.quantity))) {
+              const took = await takeStock(tx, l.variantId, l.quantity);
+              if (!took) {
                 throw new BadRequestException(
                   `${l.productTitle} is out of stock.`,
                 );
               }
+              sold.push(took);
             }
+            // Low-stock alerts, sent after commit (#16).
+            lowStock = await lowStockCrossings(tx, sold);
             if (couponCode) {
               await this.coupon.recordRedemption(
                 tx,
@@ -1078,6 +1089,8 @@ export class OrderService {
 
           return order;
         });
+        for (const alert of lowStock) void this.notifier.lowStock(alert);
+        return created;
       } catch (err) {
         if (
           err instanceof Prisma.PrismaClientKnownRequestError &&

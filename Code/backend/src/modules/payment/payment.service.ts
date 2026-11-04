@@ -17,7 +17,12 @@ import {
   NotifierService,
   OrderForConfirmation,
 } from '../notification/notifier.service';
-import { takeStock } from '../inventory/take-stock';
+import {
+  LowStockAlert,
+  lowStockCrossings,
+  StockTaken,
+  takeStock,
+} from '../inventory/take-stock';
 import { STRIPE_CLIENT } from './stripe.provider';
 
 interface CreateIntentInput {
@@ -291,6 +296,7 @@ export class PaymentService {
   ): Promise<boolean> {
     let confirmed: OrderForConfirmation | { orphanOrderId: string } | null =
       null;
+    let lowStock: LowStockAlert[] = [];
     try {
       confirmed = await this.prisma.$transaction(async (tx) => {
         // Idempotency anchor for redelivery: unique PK → throws P2002 on a duplicate.
@@ -341,10 +347,13 @@ export class PaymentService {
         // take what's there (#6): if another paid order got the last units
         // first, give back what this one took, cancel it and refund it.
         const taken: typeof order.items = [];
+        const sold: StockTaken[] = [];
         for (const item of order.items) {
           if (!item.variantId) continue;
-          if (await takeStock(tx, item.variantId, item.quantity)) {
+          const took = await takeStock(tx, item.variantId, item.quantity);
+          if (took) {
             taken.push(item);
+            sold.push(took);
             continue;
           }
           for (const t of taken) {
@@ -363,6 +372,8 @@ export class PaymentService {
           );
           return { orphanOrderId: order.id };
         }
+        // Low-stock alerts for sales that crossed the threshold (#16).
+        lowStock = await lowStockCrossings(tx, sold);
 
         // Finalize coupon redemption + clear the originating cart.
         if (order.couponCode) {
@@ -427,6 +438,7 @@ export class PaymentService {
     }
     // Post-commit: confirmation receipt + admin new-order alert (best-effort).
     void this.notifier.orderConfirmed(confirmed);
+    for (const alert of lowStock) void this.notifier.lowStock(alert);
     return true;
   }
 

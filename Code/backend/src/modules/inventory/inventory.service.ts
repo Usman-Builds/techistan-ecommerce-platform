@@ -9,13 +9,12 @@ import { AuditService } from '../audit/audit.service';
 import { CategoryService } from '../category/category.service';
 import { NotifierService } from '../notification/notifier.service';
 import { effectivePriceCents } from '../coupon/sale-pricing';
+import { lowStockThreshold } from './take-stock';
 import {
   InventoryQueryDto,
   InventorySort,
   InventoryStockFilter,
 } from './dto/inventory-query.dto';
-
-const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 
 interface VariantRow {
   id: string;
@@ -64,12 +63,8 @@ export class InventoryService {
     private readonly notifier: NotifierService,
   ) {}
 
-  async threshold(): Promise<number> {
-    const s = await this.prisma.storeSetting.findFirst({
-      where: { singleton: true },
-      select: { lowStockThreshold: true },
-    });
-    return s?.lowStockThreshold ?? DEFAULT_LOW_STOCK_THRESHOLD;
+  threshold(): Promise<number> {
+    return lowStockThreshold(this.prisma);
   }
 
   /**

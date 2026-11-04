@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { EmailService } from '../email/email.service';
+import { EmailService, type OrderLink } from '../email/email.service';
 import { NotificationService } from './notification.service';
 import { SmsService } from './sms.service';
 
@@ -23,6 +23,11 @@ export interface OrderForConfirmation {
     unitPrice: number;
     total: number;
   }[];
+}
+
+/** Where an order email's "View order" link points (#35): by id, never number. */
+function linkTo(order: { id: string; userId: number | null }): OrderLink {
+  return { orderId: order.id, userId: order.userId };
 }
 
 interface OrderRef {
@@ -67,23 +72,27 @@ export class NotifierService {
   /** Order confirmed on payment success: receipt email + customer & admin bells. */
   async orderConfirmed(order: OrderForConfirmation): Promise<void> {
     try {
-      await this.email.sendOrderConfirmation(order.email, {
-        firstName: null,
-        orderNumber: order.orderNumber,
-        currency: order.currency,
-        items: order.items.map((i) => ({
-          title: i.productTitle,
-          variant: formatVariant(i.variantOptions),
-          quantity: i.quantity,
-          unitPriceCents: i.unitPrice,
-          lineTotalCents: i.total,
-        })),
-        subtotalCents: order.subtotal,
-        shippingCents: order.shippingTotal,
-        taxCents: order.taxTotal,
-        discountCents: order.discountTotal,
-        totalCents: order.grandTotal,
-      });
+      await this.email.sendOrderConfirmation(
+        order.email,
+        {
+          firstName: null,
+          orderNumber: order.orderNumber,
+          currency: order.currency,
+          items: order.items.map((i) => ({
+            title: i.productTitle,
+            variant: formatVariant(i.variantOptions),
+            quantity: i.quantity,
+            unitPriceCents: i.unitPrice,
+            lineTotalCents: i.total,
+          })),
+          subtotalCents: order.subtotal,
+          shippingCents: order.shippingTotal,
+          taxCents: order.taxTotal,
+          discountCents: order.discountTotal,
+          totalCents: order.grandTotal,
+        },
+        linkTo(order),
+      );
 
       if (order.userId != null) {
         await this.notifications.create({
@@ -124,10 +133,11 @@ export class NotifierService {
     },
   ): Promise<void> {
     try {
-      await this.email.sendShipping(order.email, {
-        orderNumber: order.orderNumber,
-        ...shipment,
-      });
+      await this.email.sendShipping(
+        order.email,
+        { orderNumber: order.orderNumber, ...shipment },
+        linkTo(order),
+      );
       if (order.userId != null) {
         await this.notifications.create({
           userId: order.userId,
@@ -160,10 +170,11 @@ export class NotifierService {
       }
       const copy = statusEmailCopy(status, order.orderNumber);
       if (copy) {
-        await this.email.sendOrderStatus(order.email, {
-          orderNumber: order.orderNumber,
-          ...copy,
-        });
+        await this.email.sendOrderStatus(
+          order.email,
+          { orderNumber: order.orderNumber, ...copy },
+          linkTo(order),
+        );
       }
     } catch (err) {
       this.warn('orderStatusChanged', err);
@@ -176,11 +187,15 @@ export class NotifierService {
     refund: { amountCents: number; currency: string },
   ): Promise<void> {
     try {
-      await this.email.sendRefund(order.email, {
-        orderNumber: order.orderNumber,
-        amountCents: refund.amountCents,
-        currency: refund.currency,
-      });
+      await this.email.sendRefund(
+        order.email,
+        {
+          orderNumber: order.orderNumber,
+          amountCents: refund.amountCents,
+          currency: refund.currency,
+        },
+        linkTo(order),
+      );
       if (order.userId != null) {
         await this.notifications.create({
           userId: order.userId,
@@ -198,12 +213,16 @@ export class NotifierService {
   async returnUpdated(order: OrderRef, status: string): Promise<void> {
     try {
       const headline = `Return ${status.toLowerCase()} for ${order.orderNumber}`;
-      await this.email.sendOrderStatus(order.email, {
-        subject: headline,
-        orderNumber: order.orderNumber,
-        headline,
-        message: `Your return request for order ${order.orderNumber} is now ${status.toLowerCase()}.`,
-      });
+      await this.email.sendOrderStatus(
+        order.email,
+        {
+          subject: headline,
+          orderNumber: order.orderNumber,
+          headline,
+          message: `Your return request for order ${order.orderNumber} is now ${status.toLowerCase()}.`,
+        },
+        linkTo(order),
+      );
       if (order.userId != null) {
         await this.notifications.create({
           userId: order.userId,

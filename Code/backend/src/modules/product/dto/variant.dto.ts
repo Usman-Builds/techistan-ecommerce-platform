@@ -12,9 +12,18 @@ import {
  * value, e.g. `{ "Size": "M", "Color": "Red" }`. `sku` is optional — the service
  * auto-generates a unique one when omitted (and suffixes on collision).
  *
+ * On update, an existing variant is matched by `id` when given, otherwise by its
+ * option combination, and updated in place (#27); unmatched inputs are created.
+ *
  * All money is integer cents; floats/decimals are rejected by `@IsInt`.
  */
 export class VariantInputDto {
+  /** Existing variant to update (optional; matching by options also works). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  id?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(64)

@@ -16,7 +16,7 @@ import {
  * a purchase. See e2e/README.md for the verify-link strategy in CI.
  */
 test.describe("account journeys", () => {
-  test("self sign-up creates a CUSTOMER and reaches the account area", async ({ page }) => {
+  test("self sign-up creates the account and asks to verify the email", async ({ page }) => {
     const email = uniqueEmail("newuser");
     await page.goto("/register");
     await page.getByLabel(/first name/i).fill("New");
@@ -25,11 +25,13 @@ test.describe("account journeys", () => {
     await page.getByLabel(/^password/i).fill("Str0ng!pass");
     await page.getByRole("button", { name: /create account|sign up|register/i }).click();
 
-    // Registration auto-authenticates (cookies set) — the account menu should
-    // now reflect a signed-in user.
-    await expect(page.getByRole("button", { name: /account/i })).toBeVisible({
-      timeout: 15_000,
-    });
+    // Registration does not sign the shopper in (#19): they verify the email
+    // first, then log in.
+    await expect(
+      page.getByRole("heading", { name: /check your email/i }),
+    ).toBeVisible({ timeout: 15_000 });
+    const cookies = await page.context().cookies();
+    expect(cookies.some((c) => c.name === "access_token")).toBe(false);
   });
 
   test("a completed purchase appears in account order history", async ({ page }) => {

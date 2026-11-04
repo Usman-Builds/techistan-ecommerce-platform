@@ -3,13 +3,15 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { Role } from '@prisma/client';
 import { createTestApp, readSetCookie } from './utils/e2e';
-import { resetDb } from './utils/db';
+import { resetDb, makeUser } from './utils/db';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 /**
- * Auth flow (script 04): register creates a CUSTOMER pending verification, the
- * email-verification token flow, login sets the httpOnly JWT cookie, and refresh
- * rotates the refresh token (old one is invalidated). Real DB, real bcrypt/JWT.
+ * Auth flow (script 04): register creates a CUSTOMER pending verification and
+ * signs nobody in (#19), the email-verification token flow, login sets the
+ * httpOnly JWT cookie, and refresh rotates the refresh token (old one is
+ * invalidated) and refuses unverified or banned accounts. Real DB, real
+ * bcrypt/JWT.
  */
 const PASSWORD = 'Str0ng!pass';
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -36,17 +38,20 @@ describe('Auth (e2e)', () => {
       password: PASSWORD,
     });
 
-  it('registers a CUSTOMER pending email verification and sets auth cookies', async () => {
+  it('registers a CUSTOMER pending email verification without signing in', async () => {
     const res = await register('reg@example.com').expect(201);
     expect(res.body.user).toMatchObject({
       email: 'reg@example.com',
       role: 'CUSTOMER',
     });
     expect(res.body.user.password).toBeUndefined(); // never leak the hash
+    expect(res.body.verificationRequired).toBe(true);
+    expect(res.body.accessToken).toBeUndefined();
 
-    const cookies = res.headers['set-cookie'] as unknown as string[];
-    expect(cookies.some((c) => c.startsWith('access_token='))).toBe(true);
-    expect(cookies.some((c) => c.includes('HttpOnly'))).toBe(true);
+    // #19: no session until the email is verified.
+    const cookies = (res.headers['set-cookie'] as unknown as string[]) ?? [];
+    expect(cookies.some((c) => c.startsWith('access_token='))).toBe(false);
+    expect(cookies.some((c) => c.startsWith('refresh_token='))).toBe(false);
 
     const row = await prisma.user.findUnique({
       where: { email: 'reg@example.com' },
@@ -97,8 +102,16 @@ describe('Auth (e2e)', () => {
     expect(access).toContain('HttpOnly');
   });
 
+  const loginAs = async (email: string) => {
+    await makeUser(prisma, { email, password: PASSWORD });
+    return request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, password: PASSWORD })
+      .expect(200);
+  };
+
   it('rotates the refresh token and rejects the superseded one', async () => {
-    const reg = await register('rotate@example.com').expect(201);
+    const reg = await loginAs('rotate@example.com');
     const firstRefresh = readSetCookie(reg, 'refresh_token');
     expect(firstRefresh).toBeTruthy();
 
@@ -120,6 +133,32 @@ describe('Auth (e2e)', () => {
     await request(app.getHttpServer())
       .post('/auth/refresh')
       .set('Cookie', `refresh_token=${firstRefresh}`)
+      .expect(401);
+  });
+
+  it('refuses to refresh a session for an unverified account (#19)', async () => {
+    const res = await loginAs('unverified@example.com');
+    const refresh = readSetCookie(res, 'refresh_token');
+    await prisma.user.update({
+      where: { email: 'unverified@example.com' },
+      data: { emailVerified: null },
+    });
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('Cookie', `refresh_token=${refresh}`)
+      .expect(401);
+  });
+
+  it('refuses to refresh a session for a banned account', async () => {
+    const res = await loginAs('banned@example.com');
+    const refresh = readSetCookie(res, 'refresh_token');
+    await prisma.user.update({
+      where: { email: 'banned@example.com' },
+      data: { status: 'BANNED' },
+    });
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .set('Cookie', `refresh_token=${refresh}`)
       .expect(401);
   });
 

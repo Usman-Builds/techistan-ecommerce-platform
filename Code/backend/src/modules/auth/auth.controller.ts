@@ -36,17 +36,14 @@ export class AuthController {
     private readonly cart: CartService,
   ) {}
 
-  // 👤 Local register
+  // 👤 Local register — creates the account and emails the verification link.
+  // No auth cookies (#19): the user signs in once the email is verified, and
+  // the guest cart is merged then, by login.
   @Throttle(STRICT_THROTTLE)
   @Post('register')
-  async register(
-    @Body() dto: RegisterDto,
-    @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const tokens = await this.authService.register(dto);
-    await this.mergeGuestCart(req, res, tokens.user.id);
-    return this.respondWithTokens(res, tokens);
+  async register(@Body() dto: RegisterDto) {
+    const { user } = await this.authService.register(dto);
+    return { user, verificationRequired: true };
   }
 
   // 🔑 Local login

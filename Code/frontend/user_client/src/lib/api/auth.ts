@@ -19,13 +19,16 @@ export type User = {
 
 export type AuthResponse = { user: User; accessToken: string };
 
+/** Registration creates the account but no session: verify, then sign in (#19). */
+export type RegisterResponse = { user: User; verificationRequired: true };
+
 export function register(input: {
   firstName: string;
   lastName: string;
   email: string;
   password: string;
-}): Promise<AuthResponse> {
-  return apiClient.post<AuthResponse>("/auth/register", input);
+}): Promise<RegisterResponse> {
+  return apiClient.post<RegisterResponse>("/auth/register", input);
 }
 
 export function login(input: {

@@ -72,7 +72,10 @@ function setup(
       update: jest.fn(),
       // #6: stock is taken only while enough is left.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({ stock: 50 }),
+      findMany: jest.fn().mockResolvedValue([]),
     },
+    storeSetting: { findFirst: jest.fn().mockResolvedValue(null) },
     cartItem: { deleteMany: jest.fn() },
     cart: { updateMany: jest.fn() },
   };

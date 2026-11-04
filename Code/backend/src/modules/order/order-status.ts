@@ -6,13 +6,15 @@ import { OrderStatus } from '@prisma/client';
  *
  *   PENDING → CONFIRMED → PROCESSING → SHIPPED → DELIVERED → COMPLETED
  *
- * plus the escape hatches CANCELLED and REFUNDED. CONFIRMED is normally reached
- * by the Stripe webhook (script 10); REFUNDED is reached only through the refund
- * flow (PaymentService.processRefund), so it is intentionally NOT a target of
- * `updateStatus` — see {@link assertTransition}.
+ * plus the escape hatches CANCELLED and REFUNDED. CONFIRMED is reached ONLY by
+ * payment (the Stripe webhook / reconcile, or a $0 order), which also
+ * decrements stock, redeems the coupon and clears the cart. It is not a
+ * status-change target: an admin flipping PENDING → CONFIRMED would ship an
+ * unpaid order with none of those side effects (#50). REFUNDED is likewise
+ * reached only through the refund flow (PaymentService.processRefund).
  */
 export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
+  [OrderStatus.PENDING]: [OrderStatus.CANCELLED],
   [OrderStatus.CONFIRMED]: [
     OrderStatus.PROCESSING,
     OrderStatus.SHIPPED,

@@ -11,10 +11,11 @@ import { OrderStatusBadge } from "./OrderStatusBadge";
  * Client-side mirror of the backend lifecycle map (order-status.ts). Used only to
  * offer valid options — the server re-validates every transition (NFR-208), so a
  * stale map can never authorize an illegal jump. REFUNDED is intentionally absent:
- * refunds go through the dedicated refund panel.
+ * refunds go through the dedicated refund panel, and CONFIRMED is reached only
+ * by payment (#50).
  */
-const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  PENDING: ["CONFIRMED", "CANCELLED"],
+export const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  PENDING: ["CANCELLED"],
   CONFIRMED: ["PROCESSING", "SHIPPED", "CANCELLED"],
   PROCESSING: ["SHIPPED", "CANCELLED"],
   SHIPPED: ["DELIVERED"],

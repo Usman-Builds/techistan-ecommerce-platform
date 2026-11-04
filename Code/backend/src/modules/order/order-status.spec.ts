@@ -13,10 +13,19 @@ import {
  * jumps (e.g. REFUNDED → SHIPPED) are rejected.
  */
 describe('order status transitions', () => {
-  it('permits the documented happy-path edges', () => {
+  it('never lets a status change confirm an unpaid order (#50)', () => {
+    // CONFIRMED is reached only through payment (webhook / reconcile / $0
+    // order), which also decrements stock, redeems the coupon and clears the
+    // cart. A bare status flip would skip all of that.
     expect(canTransition(OrderStatus.PENDING, OrderStatus.CONFIRMED)).toBe(
-      true,
+      false,
     );
+    expect(ORDER_TRANSITIONS[OrderStatus.PENDING]).toEqual([
+      OrderStatus.CANCELLED,
+    ]);
+  });
+
+  it('permits the documented happy-path edges', () => {
     expect(canTransition(OrderStatus.CONFIRMED, OrderStatus.PROCESSING)).toBe(
       true,
     );

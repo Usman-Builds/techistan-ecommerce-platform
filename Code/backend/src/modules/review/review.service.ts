@@ -89,7 +89,7 @@ export class ReviewService {
       throw new ConflictException('You have already reviewed this product.');
     }
 
-    const images = await this.resolveReviewImages(dto.mediaIds);
+    const images = await this.resolveReviewImages(userId, dto.mediaIds);
 
     let review: Prisma.ReviewGetPayload<{ include: { images: true } }>;
     try {
@@ -383,10 +383,13 @@ export class ReviewService {
 
   /**
    * Resolve up to {@link MAX_REVIEW_IMAGES} MediaAsset ids into ReviewImage
-   * create rows (copying the Cloudinary reference). Rejects unknown ids and any
-   * count over the cap.
+   * create rows (copying the Cloudinary reference). Only photos the author
+   * uploaded through `/reviews/media` count (#33), so a customer can't attach
+   * the admin library's assets, or another customer's photos, by id. Rejects
+   * unknown or foreign ids and any count over the cap.
    */
   private async resolveReviewImages(
+    userId: number,
     mediaIds?: string[],
   ): Promise<
     { cloudinaryPublicId: string; url: string; alt: string | null }[]
@@ -399,7 +402,7 @@ export class ReviewService {
       );
     }
     const assets = await this.prisma.mediaAsset.findMany({
-      where: { id: { in: unique } },
+      where: { id: { in: unique }, uploadedById: userId },
       select: { cloudinaryPublicId: true, url: true, alt: true },
     });
     if (assets.length !== unique.length) {

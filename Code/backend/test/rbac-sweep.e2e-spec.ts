@@ -106,6 +106,8 @@ const REVIEWED: Record<string, Access> = {
   'GET /reviews': 'public',
   'POST /reviews': 'session',
   'POST /reviews/:id/helpful': 'session',
+  'POST /reviews/media': 'session', // customer review photos (#33)
+  'POST /reviews/media/upload-signature': 'session',
   // machine-to-machine
   'POST /payments/webhook': 'secret',
   'POST /cron/abandoned-carts': 'secret',

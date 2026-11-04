@@ -3,15 +3,14 @@
 import { useCallback, useRef, useState } from "react";
 import { UploadCloud, X, Loader2, AlertCircle } from "lucide-react";
 import {
-  requestUploadSignature,
-  saveMedia,
+  requestReviewUploadSignature,
+  saveReviewMedia,
   uploadToCloudinary,
   validateFile,
 } from "@/lib/api/media";
 import { cn } from "@/lib/utils";
 
 const MAX_PHOTOS = 3;
-const REVIEW_FOLDER = "techistan/reviews"; // whitelisted server-side (media.util)
 
 type Photo = { id: string; url: string };
 type Entry = {
@@ -69,16 +68,13 @@ export function ReviewPhotoUploader({
   const uploadOne = useCallback(
     async (entry: Entry, file: File) => {
       try {
-        const sig = await requestUploadSignature(REVIEW_FOLDER);
+        // Customer endpoints (#33): the server picks the reviews folder and
+        // reads format/size from Cloudinary itself.
+        const sig = await requestReviewUploadSignature();
         const result = await uploadToCloudinary(file, sig);
-        const saved = await saveMedia({
+        const saved = await saveReviewMedia({
           cloudinaryPublicId: result.public_id,
           url: result.secure_url,
-          width: result.width,
-          height: result.height,
-          format: result.format,
-          bytes: result.bytes,
-          folder: sig.folder,
         });
         patch(entry.key, (e) => {
           if (e.previewUrl) URL.revokeObjectURL(e.previewUrl);

@@ -148,6 +148,7 @@ model User {
   emailVerifyTokens   EmailVerificationToken[]
   passwordResetTokens PasswordResetToken[]
   recentlyViewed      RecentlyViewed[]
+  mediaUploads        MediaAsset[]
 
   @@index([role])
 }
@@ -360,10 +361,15 @@ model MediaAsset {
   bytes              Int? // file size reported by Cloudinary
   alt                String?
   folder             String? // Cloudinary folder, e.g. "shopforge/products"
+  /// Customer who uploaded it (review photos, #33). Null for the admin library.
+  uploadedById       Int?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
+  uploadedBy User? @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
   @@index([createdAt])
+  @@index([uploadedById])
 }
 
 model Tag {

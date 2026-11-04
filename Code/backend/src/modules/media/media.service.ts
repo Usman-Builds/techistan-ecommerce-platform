@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -11,10 +12,12 @@ import { CLOUDINARY } from './cloudinary.provider';
 import type { CloudinaryInstance } from './cloudinary.provider';
 import { CreateSignatureDto } from './dto/create-signature.dto';
 import { SaveMediaDto } from './dto/save-media.dto';
+import { SaveReviewMediaDto } from './dto/save-review-media.dto';
 import {
   ALLOWED_FOLDERS,
   ALLOWED_FORMATS,
   DEFAULT_FOLDER,
+  FOLDERS,
   MAX_UPLOAD_BYTES,
 } from './media.util';
 
@@ -171,6 +174,43 @@ export class MediaService {
         alt: dto.alt ?? null,
         folder: dto.folder ?? null,
       },
+    });
+  }
+
+  /** Upload signature for a customer review photo: reviews folder only (#33). */
+  createReviewUploadSignature() {
+    return this.createUploadSignature({ folder: FOLDERS.reviews });
+  }
+
+  /**
+   * Confirm a customer's review photo (#33). The public id must live in the
+   * reviews folder (so a customer can't claim a catalogue or library asset);
+   * the asset is verified and size/format-checked with Cloudinary exactly as
+   * {@link saveMedia} does, and recorded with its uploader. A public id that
+   * already belongs to someone else is refused.
+   */
+  async saveReviewMedia(userId: number, dto: SaveReviewMediaDto) {
+    if (!dto.cloudinaryPublicId.startsWith(`${FOLDERS.reviews}/`)) {
+      throw new BadRequestException(
+        'Review photos must be uploaded to the reviews folder.',
+      );
+    }
+    const existing = await this.prisma.mediaAsset.findUnique({
+      where: { cloudinaryPublicId: dto.cloudinaryPublicId },
+      select: { uploadedById: true },
+    });
+    if (existing && existing.uploadedById !== userId) {
+      throw new ForbiddenException('This photo belongs to someone else.');
+    }
+    const asset = await this.saveMedia({
+      cloudinaryPublicId: dto.cloudinaryPublicId,
+      url: dto.url,
+      alt: dto.alt,
+      folder: FOLDERS.reviews,
+    });
+    return this.prisma.mediaAsset.update({
+      where: { id: asset.id },
+      data: { uploadedById: userId },
     });
   }
 

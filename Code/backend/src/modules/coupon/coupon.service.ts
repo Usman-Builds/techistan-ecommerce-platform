@@ -319,13 +319,21 @@ export class CouponService {
    * confirmation transaction. Idempotent per order via the unique
    * `(couponId, orderId)` index — a second call for the same order is a no-op and
    * never throws (so a webhook retry cannot roll back the confirmation).
+   *
+   * The usage limits are re-checked here, under a row lock on the coupon (#13):
+   * `validate()` runs at order creation and only counts finalized redemptions,
+   * so several checkouts opened before the first is paid would all pass it.
+   * Concurrent confirmations serialize on the lock, and a redemption that would
+   * exceed `usageLimit` or `perCustomerLimit` is not recorded (the payment
+   * still confirms; the skip is logged and audited for follow-up). Returns
+   * whether a redemption was recorded.
    */
   async recordRedemption(
     tx: Prisma.TransactionClient,
     code: string,
     orderId: string,
     userId: number | null,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const coupon = await tx.coupon.findFirst({
       where: { code: { equals: code, mode: 'insensitive' } },
       select: {
@@ -343,14 +351,44 @@ export class CouponService {
       this.logger.warn(
         `recordRedemption: coupon "${code}" not found for order ${orderId}; skipping.`,
       );
-      return;
+      return false;
     }
+
+    // Serialize redemptions of this coupon (lock released at commit), then
+    // re-read the limits and counts under the lock.
+    const [limits] = await tx.$queryRaw<
+      { usageLimit: number | null; perCustomerLimit: number | null }[]
+    >`SELECT "usageLimit", "perCustomerLimit" FROM "Coupon" WHERE "id" = ${coupon.id} FOR UPDATE`;
+
     // Idempotency guard — never let a duplicate create throw inside the shared tx.
     const already = await tx.couponRedemption.findFirst({
       where: { couponId: coupon.id, orderId },
       select: { id: true },
     });
-    if (already) return;
+    if (already) return false;
+
+    const overLimit = await this.redemptionLimitReached(
+      tx,
+      coupon.id,
+      userId,
+      limits,
+    );
+    if (overLimit) {
+      this.logger.warn(
+        `coupon.limit_reached code=${code} order=${orderId}: ${overLimit}; redemption not recorded.`,
+      );
+      await this.audit.record(
+        {
+          actorId: null,
+          action: 'coupon.limit_reached',
+          entityType: 'Coupon',
+          entityId: coupon.id,
+          metadata: { code, orderId, limit: overLimit },
+        },
+        tx,
+      );
+      return false;
+    }
 
     const order = await tx.order.findUnique({
       where: { id: orderId },
@@ -413,6 +451,32 @@ export class CouponService {
     this.logger.log(
       `coupon.redeemed code=${code} order=${orderId} discount=${discountCents}`,
     );
+    return true;
+  }
+
+  /**
+   * Which limit (if any) one more redemption would exceed, counted from the
+   * finalized redemptions. Call with the coupon row locked.
+   */
+  private async redemptionLimitReached(
+    tx: Prisma.TransactionClient,
+    couponId: string,
+    userId: number | null,
+    limits:
+      | { usageLimit: number | null; perCustomerLimit: number | null }
+      | undefined,
+  ): Promise<'usageLimit' | 'perCustomerLimit' | null> {
+    if (limits?.usageLimit != null) {
+      const used = await tx.couponRedemption.count({ where: { couponId } });
+      if (used >= limits.usageLimit) return 'usageLimit';
+    }
+    if (limits?.perCustomerLimit != null && userId != null) {
+      const usedByUser = await tx.couponRedemption.count({
+        where: { couponId, userId },
+      });
+      if (usedByUser >= limits.perCustomerLimit) return 'perCustomerLimit';
+    }
+    return null;
   }
 
   /** Discount (cents) applied to the item subtotal for a validated coupon. */

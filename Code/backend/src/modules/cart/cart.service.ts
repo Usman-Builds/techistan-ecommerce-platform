@@ -124,11 +124,23 @@ export class CartService {
 
   // ─────────────────────────── Identity resolution ───────────────────────────
 
-  /** Find-or-create the single cart for a signed-in customer. */
+  /**
+   * Find-or-create the single cart for a signed-in customer. Two concurrent
+   * first writes (a double-clicked "add to cart") both miss the lookup; the
+   * loser of the insert race hits the unique `userId` and re-reads the winner's
+   * cart instead of failing with a 500 (#54).
+   */
   async getOrCreateUserCart(userId: number) {
     const existing = await this.prisma.cart.findUnique({ where: { userId } });
     if (existing) return existing;
-    return this.prisma.cart.create({ data: { userId } });
+    try {
+      return await this.prisma.cart.create({ data: { userId } });
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        return this.prisma.cart.findUniqueOrThrow({ where: { userId } });
+      }
+      throw err;
+    }
   }
 
   getUserCart(userId: number) {
@@ -244,23 +256,36 @@ export class CartService {
       throw new BadRequestException('This item is out of stock.');
     }
 
-    const existing = await this.prisma.cartItem.findUnique({
-      where: { cartId_variantId: { cartId, variantId } },
-      select: { quantity: true },
-    });
-    const desired = (existing?.quantity ?? 0) + quantity;
-    const next = Math.min(desired, variant.stock); // clamp to live stock
-
-    await this.prisma.cartItem.upsert({
-      where: { cartId_variantId: { cartId, variantId } },
-      create: {
-        cartId,
-        productId: variant.productId,
-        variantId,
-        quantity: next,
-        unitPriceCents: variant.price,
-      },
-      update: { quantity: next, unitPriceCents: variant.price },
+    // Increment in the database, not in JS (#54): a read-add-write lost one of
+    // two concurrent "+1"s. Then clamp to live stock with a conditional update,
+    // so the line never ends up above what can be bought.
+    const where = { cartId_variantId: { cartId, variantId } };
+    const upsert = () =>
+      this.prisma.cartItem.upsert({
+        where,
+        create: {
+          cartId,
+          productId: variant.productId,
+          variantId,
+          quantity: Math.min(quantity, variant.stock),
+          unitPriceCents: variant.price,
+        },
+        update: {
+          quantity: { increment: quantity },
+          unitPriceCents: variant.price,
+        },
+      });
+    try {
+      await upsert();
+    } catch (err) {
+      // Two concurrent first adds of this variant both tried to create the
+      // line; the loser now finds it and increments.
+      if (!isUniqueViolation(err)) throw err;
+      await upsert();
+    }
+    await this.prisma.cartItem.updateMany({
+      where: { cartId, variantId, quantity: { gt: variant.stock } },
+      data: { quantity: variant.stock },
     });
     await this.touch(cartId);
     return this.buildView(cartId);
@@ -685,4 +710,11 @@ export class CartService {
   private dollars(cents: number): string {
     return `$${(cents / 100).toFixed(2)}`;
   }
+}
+
+/** Prisma's unique-constraint violation (a lost insert race). */
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
+  );
 }

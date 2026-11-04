@@ -299,8 +299,14 @@ export class OrderService {
     return this.payment.reconcile(payment.stripePaymentIntentId);
   }
 
-  /** List the signed-in customer's orders (most recent first), with filters. */
+  /**
+   * One page of the signed-in customer's orders (most recent first), with
+   * filters. Paginated like the admin list (#55): `pageSize` defaults to 20 and
+   * the DTO caps it at 50.
+   */
   async listMyOrders(userId: number, query: OrderQueryDto = {}) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
     const where: Prisma.OrderWhereInput = { userId };
     if (query.status) where.status = query.status;
     if (query.search) {
@@ -308,12 +314,22 @@ export class OrderService {
     }
     this.applyDateRange(where, query.from, query.to);
 
-    const orders = await this.prisma.order.findMany({
-      where,
-      include: ORDER_INCLUDE,
-      orderBy: { createdAt: 'desc' },
-    });
-    return orders.map((o) => OrderService.toView(o));
+    const [total, orders] = await this.prisma.$transaction([
+      this.prisma.order.count({ where }),
+      this.prisma.order.findMany({
+        where,
+        include: ORDER_INCLUDE,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return {
+      items: orders.map((o) => OrderService.toView(o)),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   // ─────────────────────────── Customer mutations ───────────────────────────

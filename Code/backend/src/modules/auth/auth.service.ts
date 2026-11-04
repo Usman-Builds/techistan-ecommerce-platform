@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { randomBytes, createHash } from 'crypto';
+import { randomBytes, randomUUID, createHash } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
@@ -28,6 +28,15 @@ export type PublicUser = {
   profilePhoto: string | null;
   deletionScheduledAt: Date | null;
 };
+
+/**
+ * How long a just-rotated refresh token is still accepted (#22). Two tabs, or a
+ * server render and a client fetch, often refresh with the same cookie at the
+ * same moment; the second must not be mistaken for a stolen token.
+ */
+export const REFRESH_GRACE_MS = 30_000;
+
+type RefreshPayload = { sub: number; sid?: string };
 
 export type IssuedTokens = {
   accessToken: string;
@@ -203,6 +212,9 @@ export class AuthService {
         where: { id: record.userId },
         data: { password: hashed, refreshToken: null },
       }),
+      this.prisma.refreshSession.deleteMany({
+        where: { userId: record.userId },
+      }),
       this.prisma.passwordResetToken.update({
         where: { id: record.id },
         data: { usedAt: new Date() },
@@ -214,7 +226,7 @@ export class AuthService {
 
   // ── Refresh-token rotation ────────────────────────────────────────────────
   async refresh(rawRefreshToken: string): Promise<IssuedTokens> {
-    let payload: { sub: number };
+    let payload: RefreshPayload;
     try {
       payload = this.jwtService.verify(rawRefreshToken, {
         secret: this.config.get<string>('jwt.refreshSecret'),
@@ -226,7 +238,7 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
     });
-    if (!user || !user.refreshToken) {
+    if (!user) {
       throw new UnauthorizedException('Invalid refresh token');
     }
     // Same gates as login (#19): an unverified LOCAL account or a banned or
@@ -239,7 +251,15 @@ export class AuthService {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    // Compare the presented token against the stored bcrypt hash.
+    if (payload.sid) {
+      return this.rotateSession(user, payload.sid, rawRefreshToken);
+    }
+
+    // A token from before per-device sessions (#22): check it against the
+    // legacy single hash once, then move this device onto its own session.
+    if (!user.refreshToken) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
     const matches = await bcrypt.compare(
       this.hashToken(rawRefreshToken),
       user.refreshToken,
@@ -253,14 +273,88 @@ export class AuthService {
       });
       throw new UnauthorizedException('Refresh token reuse detected');
     }
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { refreshToken: null },
+    });
+    return this.issueTokens(user);
+  }
 
-    return this.issueTokens(user); // rotates + overwrites the stored hash
+  /**
+   * Rotate the refresh token of one session (#22). The current token rotates;
+   * the one rotated out just before is accepted for {@link REFRESH_GRACE_MS}
+   * (concurrent refreshes). Anything else is a replayed, superseded token:
+   * that session alone is revoked.
+   */
+  private async rotateSession(
+    user: { id: number; email: string; role: string },
+    sessionId: string,
+    rawRefreshToken: string,
+  ): Promise<IssuedTokens> {
+    const presented = this.hashToken(rawRefreshToken);
+    const session = await this.prisma.refreshSession.findUnique({
+      where: { id: sessionId },
+    });
+    if (
+      !session ||
+      session.userId !== user.id ||
+      session.expiresAt < new Date()
+    ) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    const tokens = this.signTokens(user, session.id);
+    const next = this.hashToken(tokens.refreshToken);
+    const expiresAt = this.refreshExpiry();
+
+    if (presented === session.tokenHash) {
+      // Conditional: of two concurrent rotations only one matches here.
+      const { count } = await this.prisma.refreshSession.updateMany({
+        where: { id: session.id, tokenHash: presented },
+        data: {
+          tokenHash: next,
+          previousHash: presented,
+          rotatedAt: new Date(),
+          expiresAt,
+        },
+      });
+      if (count === 1) return { ...tokens, user: this.toPublicUser(user) };
+    }
+
+    // The loser of a concurrent rotation, or a tab a moment behind: accept
+    // the token that was rotated out within the grace window.
+    const { count } = await this.prisma.refreshSession.updateMany({
+      where: {
+        id: session.id,
+        previousHash: presented,
+        rotatedAt: { gte: new Date(Date.now() - REFRESH_GRACE_MS) },
+      },
+      data: { tokenHash: next, expiresAt },
+    });
+    if (count === 1) return { ...tokens, user: this.toPublicUser(user) };
+
+    // Reuse detection: a signed but superseded token. Revoke this session.
+    await this.prisma.refreshSession.deleteMany({ where: { id: session.id } });
+    throw new UnauthorizedException('Refresh token reuse detected');
   }
 
   // ── Session teardown ──────────────────────────────────────────────────────
-  async logout(userId: number): Promise<void> {
-    await this.prisma.user.update({
-      where: { id: userId },
+  /**
+   * Sign out the device whose refresh token was presented (#22). Other
+   * devices stay signed in. A token from before per-device sessions clears
+   * the legacy single session, as before.
+   */
+  async logout(rawRefreshToken?: string): Promise<void> {
+    const payload = this.verifyRefresh(rawRefreshToken);
+    if (!payload) return;
+    if (payload.sid) {
+      await this.prisma.refreshSession.deleteMany({
+        where: { id: payload.sid, userId: payload.sub },
+      });
+      return;
+    }
+    await this.prisma.user.updateMany({
+      where: { id: payload.sub },
       data: { refreshToken: null },
     });
   }
@@ -271,45 +365,72 @@ export class AuthService {
     return this.toPublicUser(user);
   }
 
-  // Resolve the user id from a refresh-token cookie without throwing — used by
-  // logout so an expired access token can still tear down the session.
-  resolveUserIdFromRefresh(rawRefreshToken?: string): number | null {
+  // Read a refresh-token cookie without throwing — used by logout so an
+  // expired access token can still tear down the session.
+  private verifyRefresh(rawRefreshToken?: string): RefreshPayload | null {
     if (!rawRefreshToken) return null;
     try {
-      const payload = this.jwtService.verify<{ sub: number }>(rawRefreshToken, {
+      return this.jwtService.verify<RefreshPayload>(rawRefreshToken, {
         secret: this.config.get<string>('jwt.refreshSecret'),
       });
-      return payload.sub;
     } catch {
       return null;
     }
   }
 
   // ── Internals ─────────────────────────────────────────────────────────────
+  /** Start a new session (one per sign-in, #22) and issue its tokens. */
   private async issueTokens(user: any): Promise<IssuedTokens> {
-    const payload = { sub: user.id, email: user.email, role: user.role };
+    const sessionId = randomUUID();
+    const tokens = this.signTokens(user, sessionId);
+    // Sweep this user's expired sessions so the table doesn't grow unbounded.
+    await this.prisma.refreshSession.deleteMany({
+      where: { userId: user.id, expiresAt: { lt: new Date() } },
+    });
+    // Only a hash of the refresh token is stored, never the raw token.
+    await this.prisma.refreshSession.create({
+      data: {
+        id: sessionId,
+        userId: user.id,
+        tokenHash: this.hashToken(tokens.refreshToken),
+        expiresAt: this.refreshExpiry(),
+      },
+    });
+    return { ...tokens, user: this.toPublicUser(user) };
+  }
 
+  /**
+   * Sign an access + refresh pair for a session. `sid` ties both to the
+   * session, so ending it also ends its access token (see JwtStrategy). A
+   * random `jti` keeps two tokens signed in the same second distinct.
+   */
+  private signTokens(
+    user: { id: number; email: string; role: string },
+    sessionId: string,
+  ) {
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      sid: sessionId,
+    };
     // Access token uses the JwtModule defaults (JWT_SECRET / JWT_EXPIRES_IN).
     const accessToken = this.jwtService.sign(payload);
-
     // Refresh token uses a separate secret + longer TTL.
     const refreshToken = this.jwtService.sign(payload, {
       secret: this.config.get<string>('jwt.refreshSecret'),
-      expiresIn: Number(this.config.get('jwt.refreshExpiresIn')) || 2592000,
+      expiresIn: this.refreshTtlSeconds(),
+      jwtid: randomUUID(),
     });
+    return { accessToken, refreshToken };
+  }
 
-    // Persist a bcrypt hash of the refresh token (never the raw token). We
-    // sha256 first so bcrypt's 72-byte input limit can't truncate a long JWT.
-    const refreshHash = await bcrypt.hash(
-      this.hashToken(refreshToken),
-      BCRYPT_COST,
-    );
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { refreshToken: refreshHash },
-    });
+  private refreshTtlSeconds(): number {
+    return Number(this.config.get('jwt.refreshExpiresIn')) || 2592000;
+  }
 
-    return { accessToken, refreshToken, user: this.toPublicUser(user) };
+  private refreshExpiry(): Date {
+    return new Date(Date.now() + this.refreshTtlSeconds() * 1000);
   }
 
   private async issueVerificationEmail(

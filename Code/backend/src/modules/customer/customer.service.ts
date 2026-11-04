@@ -178,7 +178,9 @@ export class CustomerService {
       where: { id },
       data: {
         status,
-        ...(status === UserStatus.BANNED ? { refreshToken: null } : {}),
+        ...(status === UserStatus.BANNED
+          ? { refreshToken: null, refreshSessions: { deleteMany: {} } }
+          : {}),
       },
       select: {
         id: true,

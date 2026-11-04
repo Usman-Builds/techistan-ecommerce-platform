@@ -319,6 +319,7 @@ export class AccountService {
           deletionScheduledAt: null,
         },
       });
+      await tx.refreshSession.deleteMany({ where: { userId } });
 
       await this.audit.record(
         {

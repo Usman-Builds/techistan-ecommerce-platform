@@ -144,6 +144,7 @@ export function SearchView() {
                         image: item.primaryImage,
                         rating: item.rating,
                         highlight: item.highlight,
+                        onSale: item.onSale,
                       }}
                     />
                   </li>

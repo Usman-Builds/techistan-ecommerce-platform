@@ -13,8 +13,11 @@ export interface SearchCard {
   id: string;
   title: string;
   slug: string;
+  /** Effective (sale-aware) price range, in cents (#31). */
   priceMin: number | null;
   priceMax: number | null;
+  /** Any variant has an active sale. Drives the Sale badge. */
+  onSale: boolean;
   primaryImage: { url: string; alt: string | null } | null;
   rating: { average: number | null; count: number };
   /** ts_headline snippets (markers swapped to <mark> client-side). Null when no query. */

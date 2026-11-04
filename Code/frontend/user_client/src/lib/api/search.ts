@@ -12,8 +12,11 @@ export interface SearchCard {
   id: string;
   title: string;
   slug: string;
+  /** Effective (sale-aware) price range, in cents. */
   priceMin: number | null;
   priceMax: number | null;
+  /** Any variant has an active sale (#31). */
+  onSale: boolean;
   primaryImage: { url: string; alt: string | null } | null;
   rating: { average: number | null; count: number };
   highlight: { title: string | null; description: string | null } | null;

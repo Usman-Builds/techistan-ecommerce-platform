@@ -58,7 +58,10 @@ function setup(
         Promise.resolve({ count: where.status === orderStatus ? 1 : 0 }),
       ),
     },
-    productVariant: { update: jest.fn() },
+    productVariant: {
+      update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     cartItem: { deleteMany: jest.fn() },
     cart: { updateMany: jest.fn() },
   };
@@ -119,6 +122,7 @@ describe('PaymentService and cancelled orders (#3)', () => {
       });
       expect(tx.order.update).not.toHaveBeenCalled();
       expect(tx.productVariant.update).not.toHaveBeenCalled();
+      expect(tx.productVariant.updateMany).not.toHaveBeenCalled();
       expect(coupon.recordRedemption).not.toHaveBeenCalled();
       expect(tx.cartItem.deleteMany).not.toHaveBeenCalled();
       expect(notifier.orderConfirmed).not.toHaveBeenCalled();
@@ -135,7 +139,7 @@ describe('PaymentService and cancelled orders (#3)', () => {
         orderStatus: OrderStatus.PENDING,
       });
       await service.handleEvent(succeeded);
-      expect(tx.productVariant.update).toHaveBeenCalledTimes(1);
+      expect(tx.productVariant.updateMany).toHaveBeenCalledTimes(1);
       expect(notifier.orderConfirmed).toHaveBeenCalledTimes(1);
       expect(processRefund).not.toHaveBeenCalled();
     });

@@ -68,7 +68,11 @@ function setup(
       // #3: confirmation is conditional on the order still being PENDING.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    productVariant: { update: jest.fn() },
+    productVariant: {
+      update: jest.fn(),
+      // #6: stock is taken only while enough is left.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     cartItem: { deleteMany: jest.fn() },
     cart: { updateMany: jest.fn() },
   };
@@ -122,8 +126,8 @@ describe('PaymentService', () => {
         where: { id: 'ord_1', status: OrderStatus.PENDING },
         data: { status: OrderStatus.CONFIRMED },
       });
-      expect(tx.productVariant.update).toHaveBeenCalledWith({
-        where: { id: 'var_1' },
+      expect(tx.productVariant.updateMany).toHaveBeenCalledWith({
+        where: { id: 'var_1', stock: { gte: 2 } },
         data: { stock: { decrement: 2 } },
       });
       expect(notifier.orderConfirmed).toHaveBeenCalledTimes(1);
@@ -136,7 +140,7 @@ describe('PaymentService', () => {
       await expect(service.reconcile('pi_1')).resolves.toBe(false);
 
       expect(tx.order.updateMany).not.toHaveBeenCalled();
-      expect(tx.productVariant.update).not.toHaveBeenCalled();
+      expect(tx.productVariant.updateMany).not.toHaveBeenCalled();
       expect(tx.cartItem.deleteMany).not.toHaveBeenCalled();
       expect(notifier.orderConfirmed).not.toHaveBeenCalled();
     });

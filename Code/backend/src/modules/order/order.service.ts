@@ -20,6 +20,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotifierService } from '../notification/notifier.service';
 import { CouponService, type PromotionLine } from '../coupon/coupon.service';
 import { effectivePriceCents, isSaleActive } from '../coupon/sale-pricing';
+import { takeStock } from '../inventory/take-stock';
 import { PaymentService } from '../payment/payment.service';
 import { PricingService } from './pricing.service';
 import { CreateOrderDto, OrderAddressDto } from './dto/create-order.dto';
@@ -1036,10 +1037,12 @@ export class OrderService {
           // redemption, and clear the cart — the same effects the webhook applies.
           if (zeroDue) {
             for (const l of lines) {
-              await tx.productVariant.update({
-                where: { id: l.variantId },
-                data: { stock: { decrement: l.quantity } },
-              });
+              // Guarded (#6): rolls the whole order back if the stock is gone.
+              if (!(await takeStock(tx, l.variantId, l.quantity))) {
+                throw new BadRequestException(
+                  `${l.productTitle} is out of stock.`,
+                );
+              }
             }
             if (couponCode) {
               await this.coupon.recordRedemption(

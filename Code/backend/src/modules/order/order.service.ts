@@ -338,9 +338,12 @@ export class OrderService {
 
   /**
    * Customer return request (FR-508). Eligible only for delivered/completed
-   * orders; each requested line must belong to the order and not exceed the
-   * purchased quantity. Creates a REQUESTED ReturnRequest with a frozen item
-   * snapshot so an approved refund is computed from stable numbers.
+   * orders; each requested line must belong to the order, appear once, and fit
+   * in what is still returnable: the purchased quantity minus units already in
+   * a REQUESTED or APPROVED return (#9). The check and the insert run under a
+   * row lock on the order, so two concurrent requests can't both claim the same
+   * units. Creates a REQUESTED ReturnRequest with a frozen item snapshot so an
+   * approved refund is computed from stable numbers.
    */
   async requestReturn(
     orderId: string,
@@ -360,37 +363,64 @@ export class OrderService {
         'Only delivered orders are eligible for a return.',
       );
     }
+    const requestedIds = dto.items.map((i) => i.orderItemId);
+    if (new Set(requestedIds).size !== requestedIds.length) {
+      throw new BadRequestException(
+        'Each item can appear only once in a return request.',
+      );
+    }
 
-    const snapshot: ReturnItemSnapshot[] = dto.items.map((req) => {
-      const line = order.items.find((i) => i.id === req.orderItemId);
-      if (!line) {
-        throw new BadRequestException(
-          `Item ${req.orderItemId} is not part of this order.`,
-        );
+    const ret = await this.prisma.$transaction(async (tx) => {
+      // Serialize return requests for this order (released at commit).
+      await tx.$queryRaw`SELECT "id" FROM "Order" WHERE "id" = ${order.id} FOR UPDATE`;
+      const prior = await tx.returnRequest.findMany({
+        where: { orderId: order.id, status: { not: ReturnStatus.REJECTED } },
+        select: { items: true },
+      });
+      const alreadyReturned = new Map<string, number>();
+      for (const r of prior) {
+        for (const i of OrderService.parseReturnItems(r.items)) {
+          alreadyReturned.set(
+            i.orderItemId,
+            (alreadyReturned.get(i.orderItemId) ?? 0) + i.quantity,
+          );
+        }
       }
-      if (req.quantity > line.quantity) {
-        throw new BadRequestException(
-          `Cannot return ${req.quantity} of "${line.productTitle}" — only ${line.quantity} were purchased.`,
-        );
-      }
-      return {
-        orderItemId: line.id,
-        variantId: line.variantId,
-        sku: line.sku,
-        productTitle: line.productTitle,
-        quantity: req.quantity,
-        unitPrice: line.unitPrice,
-      };
-    });
 
-    const ret = await this.prisma.returnRequest.create({
-      data: {
-        orderId: order.id,
-        reasonCode: dto.reasonCode,
-        note: dto.note,
-        status: ReturnStatus.REQUESTED,
-        items: snapshot as unknown as Prisma.InputJsonValue,
-      },
+      const snapshot: ReturnItemSnapshot[] = dto.items.map((req) => {
+        const line = order.items.find((i) => i.id === req.orderItemId);
+        if (!line) {
+          throw new BadRequestException(
+            `Item ${req.orderItemId} is not part of this order.`,
+          );
+        }
+        const returnable = line.quantity - (alreadyReturned.get(line.id) ?? 0);
+        if (req.quantity > returnable) {
+          throw new BadRequestException(
+            returnable <= 0
+              ? `"${line.productTitle}" has already been returned or has a return pending.`
+              : `Cannot return ${req.quantity} of "${line.productTitle}" — only ${returnable} can still be returned.`,
+          );
+        }
+        return {
+          orderItemId: line.id,
+          variantId: line.variantId,
+          sku: line.sku,
+          productTitle: line.productTitle,
+          quantity: req.quantity,
+          unitPrice: line.unitPrice,
+        };
+      });
+
+      return tx.returnRequest.create({
+        data: {
+          orderId: order.id,
+          reasonCode: dto.reasonCode,
+          note: dto.note,
+          status: ReturnStatus.REQUESTED,
+          items: snapshot as unknown as Prisma.InputJsonValue,
+        },
+      });
     });
 
     await this.audit.record({

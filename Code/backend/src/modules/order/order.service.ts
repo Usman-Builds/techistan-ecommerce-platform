@@ -145,10 +145,7 @@ export class OrderService {
       where: { idempotencyKey: dto.idempotencyKey },
       include: ORDER_INCLUDE,
     });
-    if (existing) {
-      const clientSecret = await this.resolveClientSecret(existing.id);
-      return { order: OrderService.toView(existing), clientSecret };
-    }
+    if (existing) return this.replayOrder(existing, dto.idempotencyKey);
 
     // 2. Load the cart and build authoritative line snapshots from live variants.
     if (!cartId) throw new BadRequestException('Your cart is empty.');
@@ -219,19 +216,33 @@ export class OrderService {
     // 5. Persist Order + OrderItems + a pending Payment (retry on number clash).
     const billing = dto.billingAddress ?? dto.shippingAddress;
     const zeroDue = grandTotal <= 0;
-    const created = await this.persistOrder({
-      dto,
-      userId,
-      cartId,
-      lines,
-      subtotal,
-      discountCents,
-      couponCode,
-      quote,
-      grandTotal,
-      billing,
-      zeroDue,
-    });
+    let created: OrderWithRelations;
+    try {
+      created = await this.persistOrder({
+        dto,
+        userId,
+        cartId,
+        lines,
+        subtotal,
+        discountCents,
+        couponCode,
+        quote,
+        grandTotal,
+        billing,
+        zeroDue,
+      });
+    } catch (err) {
+      // A concurrent submit with the same key won the insert (#12): answer
+      // with its order, exactly as a sequential replay would.
+      if (OrderService.isUniqueViolationOn(err, 'idempotencyKey')) {
+        const winner = await this.prisma.order.findUnique({
+          where: { idempotencyKey: dto.idempotencyKey },
+          include: ORDER_INCLUDE,
+        });
+        if (winner) return this.replayOrder(winner, dto.idempotencyKey);
+      }
+      throw err;
+    }
 
     // 6. A fully-discounted ($0) order needs no Stripe intent — it is confirmed
     // in the same transaction above; return no client secret.
@@ -858,6 +869,54 @@ export class OrderService {
       if (!Number.isNaN(d.getTime())) range.lte = d;
     }
     if (range.gte || range.lte) where.createdAt = range;
+  }
+
+  /**
+   * Answer a repeated submission with its existing order (FR-406). If the
+   * first attempt committed the order but never got a PaymentIntent (Stripe
+   * failed, or the concurrent winner hasn't created it yet), create it now
+   * (#11). Stripe's idempotency key makes that the same intent either way.
+   */
+  private async replayOrder(order: OrderWithRelations, idempotencyKey: string) {
+    let clientSecret = await this.resolveClientSecret(order.id);
+    if (
+      clientSecret === null &&
+      order.status === OrderStatus.PENDING &&
+      order.grandTotal > 0
+    ) {
+      const payment = await this.prisma.payment.findFirst({
+        where: { orderId: order.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (
+        payment &&
+        !payment.stripePaymentIntentId &&
+        payment.status === PaymentStatus.REQUIRES_PAYMENT
+      ) {
+        ({ clientSecret } = await this.payment.createIntent({
+          orderId: order.id,
+          paymentId: payment.id,
+          amountCents: order.grandTotal,
+          currency: order.currency,
+          idempotencyKey,
+        }));
+      }
+    }
+    return { order: OrderService.toView(order), clientSecret };
+  }
+
+  /** A Prisma unique-constraint violation on the given column. */
+  private static isUniqueViolationOn(err: unknown, column: string): boolean {
+    if (
+      !(err instanceof Prisma.PrismaClientKnownRequestError) ||
+      err.code !== 'P2002'
+    ) {
+      return false;
+    }
+    const target = err.meta?.target;
+    return Array.isArray(target)
+      ? target.includes(column)
+      : typeof target === 'string' && target.includes(column);
   }
 
   private async resolveClientSecret(orderId: string): Promise<string | null> {
